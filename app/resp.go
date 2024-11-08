@@ -138,6 +138,10 @@ func AppendOK(b []byte) []byte {
 	return append(b, '+', 'O', 'K', '\r', '\n')
 }
 
+func NullBulkString() []byte {
+	return []byte("$-1\r\n")
+}
+
 func stripNewlines(s string) string {
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\r' || s[i] == '\n' {

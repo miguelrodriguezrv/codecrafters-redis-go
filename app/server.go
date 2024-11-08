@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 )
 
 func main() {
@@ -40,19 +42,32 @@ func handleClient(conn net.Conn, store *Store) {
 		if len(resp) == 0 {
 			continue
 		}
-		switch string(resp[0]) {
-		case "PING":
+		switch strings.ToLower(string((resp[0]))) {
+		case "ping":
 			conn.Write(AppendString(nil, "PONG"))
-		case "ECHO":
+		case "echo":
 			conn.Write(AppendString(nil, string(resp[1])))
-		case "GET":
+		case "get":
 			value, ok := store.Get(string(resp[1]))
 			if !ok {
-				conn.Write(AppendError(nil, "1"))
+				conn.Write(NullBulkString())
+				return
 			}
 			conn.Write(AppendBulk(nil, value))
-		case "SET":
-			_ = store.Set(string(resp[1]), resp[2])
+		case "set":
+			var expiry int64
+			if len(resp) == 5 && strings.ToLower(string(resp[3])) == "px" {
+				expiry, err = strconv.ParseInt(string(resp[4]), 10, 64)
+				if err != nil {
+					conn.Write(AppendError(nil, "1"))
+					return
+				}
+			}
+			err = store.Set(string(resp[1]), resp[2], expiry)
+			if err != nil {
+				conn.Write(AppendError(nil, "1"))
+				return
+			}
 			conn.Write(AppendString(nil, "OK"))
 		}
 	}
