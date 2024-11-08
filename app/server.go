@@ -34,7 +34,16 @@ func handleClient(conn net.Conn) {
 			conn.Close()
 			return
 		}
-		fmt.Printf("(%d)> %s", n, string(buf))
-		conn.Write([]byte("+PONG\r\n"))
+		resp, err := ParseCommand(buf[:n])
+		if len(resp) == 0 {
+			continue
+		}
+
+		switch string(resp[0]) {
+		case "PING":
+			conn.Write([]byte("+PONG\r\n"))
+		case "ECHO":
+			conn.Write(append([]byte("+"), append(resp[1], '\r', '\n')...))
+		}
 	}
 }
