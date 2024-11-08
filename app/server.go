@@ -25,15 +25,16 @@ func main() {
 		}
 
 		go func() {
-			reader := bufio.NewReader(conn)
-			var req []byte
-			_, err := reader.Read(req)
-			if err != nil {
-				conn.Close()
-				return
+			for {
+				reader := bufio.NewReader(conn)
+				req, err := reader.ReadString('\n')
+				if err != nil {
+					conn.Close()
+					return
+				}
+				fmt.Printf("> %s", string(req))
+				conn.Write([]byte("+PONG\r\n"))
 			}
-			fmt.Printf("> %s", string(req))
-			conn.Write([]byte("+PONG\r\n"))
 		}()
 	}
 }
