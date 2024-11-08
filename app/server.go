@@ -43,7 +43,8 @@ func handleClient(conn net.Conn) {
 		case "PING":
 			conn.Write([]byte("+PONG\r\n"))
 		case "ECHO":
-			conn.Write(append([]byte("+"), append(resp[1], '\r', '\n')...))
+			response := AppendString(nil, string(resp[1]))
+			conn.Write(response)
 		}
 	}
 }
