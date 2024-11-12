@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"sync"
@@ -10,20 +10,20 @@ type Item struct {
 	expiry int64
 }
 
-type Store struct {
+type InMemoryStore struct {
 	items map[string]Item
 	mu    sync.RWMutex
 }
 
-func NewStore() *Store {
-	store := &Store{
+func NewInMemoryStore() *InMemoryStore {
+	store := &InMemoryStore{
 		items: make(map[string]Item, 0),
 	}
 	go store.cleanupExpiredItems()
 	return store
 }
 
-func (s *Store) Get(key string) ([]byte, bool) {
+func (s *InMemoryStore) Get(key string) ([]byte, bool) {
 	s.mu.RLock()
 	item, ok := s.items[key]
 	s.mu.RUnlock()
@@ -33,7 +33,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	return item.value, true
 }
 
-func (s *Store) Set(key string, value []byte, expiry int64) error {
+func (s *InMemoryStore) Set(key string, value []byte, expiry int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -48,7 +48,7 @@ func (s *Store) Set(key string, value []byte, expiry int64) error {
 	return nil
 }
 
-func (s *Store) cleanupExpiredItems() {
+func (s *InMemoryStore) cleanupExpiredItems() {
 	for {
 		time.Sleep(time.Minute)
 		s.mu.Lock()

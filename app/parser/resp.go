@@ -1,4 +1,4 @@
-package main
+package parser
 
 import (
 	"errors"
@@ -16,25 +16,28 @@ const (
 	Error   = '-'
 )
 
-var errInvalidArrayAst = errors.New("Invalid array, expected *")
-var errInvalidArrayCRLF = errors.New("Invalid array, expected \r\n")
+var ErrInvalidArrayAst = errors.New("invalid array, expected *")
+var ErrInvalidArrayCRLF = errors.New("invalid array, expected \\r\\n")
 
 func ParseCommand(packet []byte) ([][]byte, error) {
 	if len(packet) == 0 {
 		return nil, nil
 	}
 	if packet[0] != Array {
-		return nil, errInvalidArrayAst
+		return nil, ErrInvalidArrayAst
 	}
 	args := make([][]byte, 0)
 	for i := 1; i < len(packet); i++ {
 		if packet[i] == '\n' {
 			if packet[i-1] != '\r' {
-				return nil, errInvalidArrayCRLF
+				return nil, ErrInvalidArrayCRLF
 			}
 			count, err := strconv.Atoi(string(packet[1 : i-1]))
-			if err != nil || count < 0 {
-				return nil, errors.New("Invalid bulk count: '" + string(packet[1:i-1]) + "' - " + err.Error())
+			if err != nil {
+				return nil, errors.New("invalid bulk count: '" + string(packet[1:i-1]) + "' - " + err.Error())
+			}
+			if count < 0 {
+				return nil, errors.New("invalid array length: negative number not allowed")
 			}
 			if count == 0 {
 				return nil, nil
@@ -51,7 +54,7 @@ func ParseCommand(packet []byte) ([][]byte, error) {
 				for s := i + 1; i < len(packet); i++ {
 					if packet[i] == '\n' {
 						if packet[i-1] != '\r' {
-							return nil, errInvalidArrayCRLF
+							return nil, ErrInvalidArrayCRLF
 						}
 						n, err := strconv.Atoi(string(packet[s : i-1]))
 						if err != nil || count < 0 {
@@ -60,7 +63,7 @@ func ParseCommand(packet []byte) ([][]byte, error) {
 						i++
 						if len(packet)-i >= n+2 {
 							if packet[i+n] != '\r' || packet[i+n+1] != '\n' {
-								return nil, errInvalidArrayCRLF
+								return nil, ErrInvalidArrayCRLF
 							}
 							args = append(args, packet[i:i+n])
 							i += n + 2

@@ -1,24 +1,55 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/codecrafters-io/redis-starter-go/app/parser"
+	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
-	// Uncomment this block to pass the first stage
-	//
-	store := NewStore()
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
-	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
-		os.Exit(1)
+	dir := flag.String("dir", "/tmp/redis-data", "the path to the directory where the RDB file is stored")
+	dbFilename := flag.String("dbfilename", "rdbfile", "the name of the RDB file")
+	flag.Parse()
+
+	config := Config{
+		Dir:        *dir,
+		DBFilename: *dbFilename,
 	}
+
+	store := store.NewInMemoryStore()
+
+	server := NewServer(config, store)
+	if err := server.Listen("0.0.0.0:6379"); err != nil {
+		log.Fatal(err)
+	}
+}
+
+type Server struct {
+	config Config
+	store  store.Store
+}
+
+func NewServer(config Config, store store.Store) *Server {
+	return &Server{
+		config: config,
+		store:  store,
+	}
+}
+
+func (s *Server) Listen(address string) error {
+	l, err := net.Listen("tcp", address)
+	if err != nil {
+		return errors.New("Failed to bind to " + address)
+	}
+	log.Println("Listening to " + address)
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -26,11 +57,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		go handleClient(conn, store)
+		go s.handleClient(conn)
 	}
 }
 
-func handleClient(conn net.Conn, store *Store) {
+func (s *Server) handleClient(conn net.Conn) {
 	for {
 		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
@@ -38,37 +69,62 @@ func handleClient(conn net.Conn, store *Store) {
 			conn.Close()
 			return
 		}
-		resp, err := ParseCommand(buf[:n])
+		resp, err := parser.ParseCommand(buf[:n])
+		if err != nil {
+			conn.Write(parser.AppendError(nil, err.Error()))
+			return
+		}
 		if len(resp) == 0 {
 			continue
 		}
-		switch strings.ToLower(string((resp[0]))) {
+		switch strings.ToLower(string(resp[0])) {
 		case "ping":
-			conn.Write(AppendString(nil, "PONG"))
+			conn.Write(parser.AppendString(nil, "PONG"))
 		case "echo":
-			conn.Write(AppendString(nil, string(resp[1])))
-		case "get":
-			value, ok := store.Get(string(resp[1]))
-			if !ok {
-				conn.Write(NullBulkString())
+			conn.Write(parser.AppendString(nil, string(resp[1])))
+		case "config":
+			if len(resp) < 3 {
+				conn.Write(parser.AppendError(nil, "1"))
 				return
 			}
-			conn.Write(AppendBulk(nil, value))
+			switch strings.ToLower(string(resp[1])) {
+			case "get":
+				response := parser.AppendArray(nil, len(resp[2:])*2)
+				for _, arg := range resp[2:] {
+					switch strings.ToLower(string(arg)) {
+					case "dir":
+						response = parser.AppendBulkString(response, "dir")
+						response = parser.AppendBulkString(response, s.config.Dir)
+					case "dbfilename":
+						response = parser.AppendBulkString(response, "dbfilename")
+						response = parser.AppendBulkString(response, s.config.DBFilename)
+					}
+				}
+				conn.Write(response)
+			}
+
+		case "get":
+			value, ok := s.store.Get(string(resp[1]))
+			if !ok {
+				conn.Write(parser.NullBulkString())
+				return
+			}
+			conn.Write(parser.AppendBulk(nil, value))
 		case "set":
 			var expiry int64
 			if len(resp) == 5 && strings.ToLower(string(resp[3])) == "px" {
 				expiry, err = strconv.ParseInt(string(resp[4]), 10, 64)
 				if err != nil {
-					conn.Write(AppendError(nil, "1"))
+					conn.Write(parser.AppendError(nil, "1"))
 					return
 				}
 			}
-			err = store.Set(string(resp[1]), resp[2], expiry)
+			err = s.store.Set(string(resp[1]), resp[2], expiry)
 			if err != nil {
-				conn.Write(AppendError(nil, "1"))
+				conn.Write(parser.AppendError(nil, "1"))
 				return
 			}
-			conn.Write(AppendString(nil, "OK"))
+			conn.Write(parser.AppendString(nil, "OK"))
 		}
 	}
 }
