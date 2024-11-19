@@ -1,8 +1,11 @@
 package store
 
 import (
+	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
 type Item struct {
@@ -21,6 +24,20 @@ func NewInMemoryStore() *InMemoryStore {
 	}
 	go store.cleanupExpiredItems()
 	return store
+}
+
+func (s *InMemoryStore) Keys(pattern string) ([]string, error) {
+	keys := make([]string, 0)
+	for k := range s.items {
+		ok, err := filepath.Match(pattern, k)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
 }
 
 func (s *InMemoryStore) Get(key string) ([]byte, bool) {
@@ -60,4 +77,33 @@ func (s *InMemoryStore) cleanupExpiredItems() {
 		}
 		s.mu.Unlock()
 	}
+}
+
+func (s *InMemoryStore) Load(entries []persistence.Entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, entry := range entries {
+		var expiry int64
+		if entry.Expires != nil {
+			expiry = *entry.Expires
+		}
+		s.items[entry.Key] = Item{
+			value:  ([]byte(entry.Value)),
+			expiry: expiry,
+		}
+	}
+}
+
+func (s *InMemoryStore) Export() []persistence.Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries := make([]persistence.Entry, 0, len(s.items))
+	for key, item := range s.items {
+		entries = append(entries, persistence.Entry{
+			Key:     key,
+			Value:   string(item.value),
+			Expires: &item.expiry,
+		})
+	}
+	return entries
 }

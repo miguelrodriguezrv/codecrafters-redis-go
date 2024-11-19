@@ -7,10 +7,12 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
+	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
@@ -24,23 +26,45 @@ func main() {
 		DBFilename: *dbFilename,
 	}
 
-	store := store.NewInMemoryStore()
+	stores := createStores(path.Join(config.Dir, config.DBFilename))
 
-	server := NewServer(config, store)
+	server := NewServer(config, stores)
 	if err := server.Listen("0.0.0.0:6379"); err != nil {
 		log.Fatal(err)
 	}
 }
 
-type Server struct {
-	config Config
-	store  store.Store
+func createStores(rdbPath string) []store.Store {
+	stores := []store.Store{store.NewInMemoryStore()}
+	if file, err := os.Open(rdbPath); err == nil {
+		databases, err := persistence.LoadRDB(file)
+		if err != nil {
+			log.Fatalf("Error loading RDB file: %v", err)
+		}
+		file.Seek(0, 0)
+		if err := persistence.VerifyChecksum(file); err != nil {
+			log.Fatalf("Error veryfing RDB file: %v", err)
+		}
+		stores = make([]store.Store, len(databases))
+		for _, db := range databases {
+			store := store.NewInMemoryStore()
+			store.Load(db.Entries)
+			stores[db.Index] = store
+		}
+		log.Println("Successfully loaded", rdbPath)
+	}
+	return stores
 }
 
-func NewServer(config Config, store store.Store) *Server {
+type Server struct {
+	config Config
+	stores []store.Store
+}
+
+func NewServer(config Config, stores []store.Store) *Server {
 	return &Server{
 		config: config,
-		store:  store,
+		stores: stores,
 	}
 }
 
@@ -104,7 +128,7 @@ func (s *Server) handleClient(conn net.Conn) {
 			}
 
 		case "get":
-			value, ok := s.store.Get(string(resp[1]))
+			value, ok := s.stores[0].Get(string(resp[1]))
 			if !ok {
 				conn.Write(parser.NullBulkString())
 				return
@@ -119,11 +143,42 @@ func (s *Server) handleClient(conn net.Conn) {
 					return
 				}
 			}
-			err = s.store.Set(string(resp[1]), resp[2], expiry)
+			err = s.stores[0].Set(string(resp[1]), resp[2], expiry)
 			if err != nil {
 				conn.Write(parser.AppendError(nil, "1"))
 				return
 			}
+			conn.Write(parser.AppendString(nil, "OK"))
+		case "keys":
+			if len(resp) < 2 {
+				log.Println("Not enough arguments for KEYS")
+				conn.Write(parser.AppendError(nil, "-1"))
+				return
+			}
+			keys, err := s.stores[0].Keys(string(resp[1]))
+			if err != nil {
+				log.Println(err)
+				conn.Write(parser.AppendError(nil, "-1"))
+				return
+			}
+			conn.Write(parser.AppendArray(nil, len(keys)))
+			for _, k := range keys {
+				conn.Write(parser.AppendBulkString(nil, k))
+			}
+		case "save":
+			databases := make([]*persistence.Database, 0, len(s.stores))
+			for i, store := range s.stores {
+				databases = append(databases, &persistence.Database{
+					Index:   i,
+					Entries: store.Export(),
+				})
+			}
+			if err := persistence.SaveRDB(s.config.Dir, s.config.DBFilename, databases); err != nil {
+				log.Println(err)
+				conn.Write(parser.AppendError(nil, "-1"))
+				return
+			}
+			log.Printf("Successfully saved RDB to %s\n", path.Join(s.config.Dir, s.config.DBFilename))
 			conn.Write(parser.AppendString(nil, "OK"))
 		}
 	}
