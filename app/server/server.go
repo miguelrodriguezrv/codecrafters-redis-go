@@ -50,15 +50,7 @@ func NewServer(config Config, stores []Store) *Server {
 	}
 
 	if config.ReplicaOf != "" {
-		conn, err := net.Dial("tcp", config.ReplicaOf)
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = srv.PingServer(conn)
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = srv.SendReplConf(conn)
+		err := srv.SetupReplica(config.ReplicaOf)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -84,8 +76,31 @@ func (s *Server) Listen(address string) error {
 	}
 }
 
+func (s *Server) SetupReplica(replica string) error {
+	conn, err := net.Dial("tcp", replica)
+	if err != nil {
+		return err
+	}
+	err = s.PingServer(conn)
+	if err != nil {
+		return err
+	}
+	err = s.SendReplConf(conn)
+	if err != nil {
+		return err
+	}
+	err = s.PSync(conn)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Server) PingServer(conn net.Conn) error {
-	conn.Write(parser.AppendBulkString(parser.AppendArray(nil, 1), "PING"))
+	_, err := conn.Write(parser.AppendBulkString(parser.AppendArray(nil, 1), "PING"))
+	if err != nil {
+		return err
+	}
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -100,26 +115,52 @@ func (s *Server) PingServer(conn net.Conn) error {
 }
 
 func (s *Server) SendReplConf(conn net.Conn) error {
-	conn.Write(parser.StringArrayCommand([]string{
+	_, err := conn.Write(parser.StringArrayCommand([]string{
 		"REPLCONF",
 		"listening-port",
 		strconv.Itoa(int(s.config.Port)),
 	}))
-	err := readOK(conn)
+	if err != nil {
+		return err
+	}
+	err = readOK(conn)
 	if err != nil {
 		return fmt.Errorf("received invalid REPLCONF response: %s", err)
 	}
 
-	conn.Write(parser.StringArrayCommand([]string{
+	_, err = conn.Write(parser.StringArrayCommand([]string{
 		"REPLCONF",
 		"capa",
 		"psync2",
 	}))
+	if err != nil {
+		return err
+	}
 
 	err = readOK(conn)
 	if err != nil {
 		return fmt.Errorf("received invalid REPLCONF response: %s", err)
 	}
+	return nil
+}
+
+func (s *Server) PSync(conn net.Conn) error {
+	_, err := conn.Write(parser.StringArrayCommand([]string{
+		"PSYNC",
+		"?",
+		"-1",
+	}))
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	response := string(buf[:n])
+	log.Println(response)
 	return nil
 }
 
