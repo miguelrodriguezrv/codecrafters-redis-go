@@ -1,9 +1,12 @@
 package server
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -47,9 +50,19 @@ func (s *Server) handleClient(conn net.Conn) {
 		case "save":
 			response = s.handleSave()
 		case "replconf":
-			response = parser.AppendOK(nil)
+			if s.info.role != "master" {
+				response = parser.AppendError(nil, "-1")
+			} else {
+				response = parser.AppendOK(nil)
+			}
 		case "psync":
-			response = s.handlePSync(resp)
+			if s.info.role != "master" {
+				response = parser.AppendError(nil, "-1")
+			} else {
+				s.handlePSync(resp, conn)
+				return
+
+			}
 		default:
 			response = parser.AppendError(nil, "-1")
 		}
@@ -143,16 +156,59 @@ func (s *Server) handleSave() []byte {
 		return parser.AppendError(nil, "-1")
 	}
 	log.Printf("Successfully saved RDB to %s\n", path.Join(s.config.Dir, s.config.DBFilename))
-	return parser.AppendString(nil, "OK")
+	return parser.AppendOK(nil)
 }
 
-func (s *Server) handlePSync(resp [][]byte) []byte {
+func (s *Server) handlePSync(resp [][]byte, conn net.Conn) {
 	if len(resp) < 3 {
 		log.Println("Not enough argument for PSYNC")
-		return parser.AppendError(nil, "-1")
+		conn.Write(parser.AppendError(nil, "-1"))
 	}
 	if string(resp[1]) == "?" {
-		return parser.AppendString(nil, fmt.Sprintf("FULLRESYNC %s %d", s.info.masterReplID, s.info.masterReplOffset))
+		conn.Write(parser.AppendString(nil, fmt.Sprintf("FULLRESYNC %s %d", s.info.masterReplID, s.info.masterReplOffset)))
+		err := s.FullResync(conn)
+		if err != nil {
+			log.Printf("error handling PSYNC: %v", err)
+		}
 	}
+}
+
+func (s *Server) FullResync(conn net.Conn) error {
+	if ok := s.handleSave(); string(ok) != string(parser.AppendOK(nil)) {
+		return errors.New("error saving RDB")
+	}
+	file, err := os.Open(path.Join(s.config.Dir, s.config.DBFilename))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get file info: %v", err)
+	}
+	fileSize := fileInfo.Size()
+	_, err = conn.Write([]byte(fmt.Sprintf("$%d\r\n", fileSize)))
+	if err != nil {
+		return err
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := file.Read(buf)
+		if n > 0 {
+			if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("failed to write to connection: %v", writeErr)
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return fmt.Errorf("failed to read file: %v", readErr)
+		}
+	}
+
+	log.Println("File streamed successfully")
 	return nil
 }
