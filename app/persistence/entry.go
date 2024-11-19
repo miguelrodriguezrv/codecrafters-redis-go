@@ -55,6 +55,33 @@ func ReadKeyValue(r io.Reader) (Entry, error) {
 	return entry, nil
 }
 
+func WriteKeyValue(w io.Writer, entry Entry) error {
+	// Write expiry if it exists
+	if entry.Expires != nil {
+		if err := binary.Write(w, binary.LittleEndian, byte(expireMilliSec)); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, *entry.Expires); err != nil {
+			return err
+		}
+	}
+
+	// Write value type (0x00 for string)
+	if err := binary.Write(w, binary.LittleEndian, byte(0x00)); err != nil {
+		return err
+	}
+
+	// Write the key and value
+	if err := WriteString(w, entry.Key); err != nil {
+		return err
+	}
+	if err := WriteString(w, entry.Value); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // readExpiry reads the expiry timestamp from the reader based on the encoding type.
 func readExpiry(r io.Reader, encoding byte) (int64, error) {
 	var expiry int64

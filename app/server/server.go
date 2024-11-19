@@ -25,7 +25,7 @@ type Store interface {
 
 type Server struct {
 	config Config
-	role   string
+	info   Info
 	stores []Store
 }
 
@@ -39,8 +39,12 @@ func NewServer(config Config, stores []Store) *Server {
 
 	return &Server{
 		config: config,
-		role:   role,
 		stores: stores,
+		info: Info{
+			role:             role,
+			masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+			masterReplOffset: 0,
+		},
 	}
 }
 

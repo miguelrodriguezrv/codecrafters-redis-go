@@ -36,33 +36,6 @@ func WriteSize(w io.Writer, size int) error {
 	return binary.Write(w, binary.BigEndian, uint32(size))
 }
 
-func WriteKeyValue(w io.Writer, entry Entry) error {
-	// Write expiry if it exists
-	if entry.Expires != nil {
-		if err := binary.Write(w, binary.LittleEndian, byte(expireMilliSec)); err != nil {
-			return err
-		}
-		if err := binary.Write(w, binary.LittleEndian, *entry.Expires); err != nil {
-			return err
-		}
-	}
-
-	// Write value type (0x00 for string)
-	if err := binary.Write(w, binary.LittleEndian, byte(0x00)); err != nil {
-		return err
-	}
-
-	// Write the key and value
-	if err := WriteString(w, entry.Key); err != nil {
-		return err
-	}
-	if err := WriteString(w, entry.Value); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // WriteString writes a size-encoded string to the writer.
 func WriteString(w io.Writer, s string) error {
 	// Write the size first

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"path"
@@ -83,13 +82,6 @@ func (s *Server) handleInfo(resp [][]byte) []byte {
 		}
 	}
 	return parser.AppendBulk(nil, s.getInfoReplication())
-}
-
-func (s *Server) getInfoReplication() []byte {
-	var response []byte
-	response = parser.AppendBulkString(nil, "# Replication")
-	response = parser.AppendBulkString(response, fmt.Sprintf("role:%s", s.role))
-	return response
 }
 
 func (s *Server) handleGet(resp [][]byte) []byte {
