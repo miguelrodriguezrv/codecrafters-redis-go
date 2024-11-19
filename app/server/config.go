@@ -1,4 +1,4 @@
-package main
+package server
 
 type Config struct {
 	Dir        string
