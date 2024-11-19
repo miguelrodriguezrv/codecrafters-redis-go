@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"path"
@@ -27,22 +28,28 @@ func (s *Server) handleClient(conn net.Conn) {
 		if len(resp) == 0 {
 			continue
 		}
+		var response []byte
 		switch strings.ToLower(string(resp[0])) {
 		case "ping":
-			conn.Write(parser.AppendString(nil, "PONG"))
+			response = parser.AppendString(nil, "PONG")
 		case "echo":
-			conn.Write(parser.AppendString(nil, string(resp[1])))
+			response = parser.AppendString(nil, string(resp[1]))
 		case "config":
-			conn.Write(s.handleConfig(resp))
+			response = s.handleConfig(resp)
+		case "info":
+			response = s.handleInfo(resp)
 		case "get":
-			conn.Write(s.handleGet(resp))
+			response = s.handleGet(resp)
 		case "set":
-			conn.Write(s.handleSet(resp))
+			response = s.handleSet(resp)
 		case "keys":
-			conn.Write(s.handleKeys(resp))
+			response = s.handleKeys(resp)
 		case "save":
-			conn.Write(s.handleSave())
+			response = s.handleSave()
+		default:
+			response = parser.AppendError(nil, "-1")
 		}
+		conn.Write(response)
 	}
 }
 
@@ -66,6 +73,23 @@ func (s *Server) handleConfig(resp [][]byte) []byte {
 		return response
 	}
 	return parser.AppendError(nil, "-1")
+}
+
+func (s *Server) handleInfo(resp [][]byte) []byte {
+	for _, section := range resp[1:] {
+		switch strings.ToLower(string(section)) {
+		case "replication":
+			return parser.AppendBulk(nil, s.getInfoReplication())
+		}
+	}
+	return parser.AppendBulk(nil, s.getInfoReplication())
+}
+
+func (s *Server) getInfoReplication() []byte {
+	var response []byte
+	response = parser.AppendBulkString(nil, "# Replication")
+	response = parser.AppendBulkString(response, fmt.Sprintf("role:%s", s.role))
+	return response
 }
 
 func (s *Server) handleGet(resp [][]byte) []byte {

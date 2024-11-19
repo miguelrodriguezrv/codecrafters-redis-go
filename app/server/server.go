@@ -10,6 +10,11 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
+const (
+	MasterRole = "master"
+	SlaveRole  = "slave"
+)
+
 type Store interface {
 	Keys(pattern string) ([]string, error)
 	Load(entries []persistence.Entry)
@@ -20,12 +25,14 @@ type Store interface {
 
 type Server struct {
 	config Config
+	role   string
 	stores []Store
 }
 
 func NewServer(config Config, stores []Store) *Server {
 	return &Server{
 		config: config,
+		role:   "master",
 		stores: stores,
 	}
 }
