@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
@@ -49,7 +50,15 @@ func NewServer(config Config, stores []Store) *Server {
 	}
 
 	if config.ReplicaOf != "" {
-		err := srv.PingServer(config.ReplicaOf)
+		conn, err := net.Dial("tcp", config.ReplicaOf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = srv.PingServer(conn)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = srv.SendReplConf(conn)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -75,12 +84,7 @@ func (s *Server) Listen(address string) error {
 	}
 }
 
-func (s *Server) PingServer(address string) error {
-	log.Printf("Pinging %s\n", address)
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		return err
-	}
+func (s *Server) PingServer(conn net.Conn) error {
 	conn.Write(parser.AppendBulkString(parser.AppendArray(nil, 1), "PING"))
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -91,6 +95,44 @@ func (s *Server) PingServer(address string) error {
 	response := string(buf[:n])
 	if response != "+PONG\r\n" {
 		return fmt.Errorf("received invalid PING response: %s", response)
+	}
+	return nil
+}
+
+func (s *Server) SendReplConf(conn net.Conn) error {
+	conn.Write(parser.StringArrayCommand([]string{
+		"REPLCONF",
+		"listening-port",
+		strconv.Itoa(int(s.config.Port)),
+	}))
+	err := readOK(conn)
+	if err != nil {
+		return fmt.Errorf("received invalid REPLCONF response: %s", err)
+	}
+
+	conn.Write(parser.StringArrayCommand([]string{
+		"REPLCONF",
+		"capa",
+		"psync2",
+	}))
+
+	err = readOK(conn)
+	if err != nil {
+		return fmt.Errorf("received invalid REPLCONF response: %s", err)
+	}
+	return nil
+}
+
+func readOK(conn net.Conn) error {
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	response := string(buf[:n])
+	if response != string(parser.AppendOK(nil)) {
+		return fmt.Errorf("%s", response)
 	}
 	return nil
 }
