@@ -45,6 +45,8 @@ func (s *Server) handleClient(conn net.Conn) {
 			response = s.handleKeys(resp)
 		case "save":
 			response = s.handleSave()
+		case "replconf":
+			response = parser.AppendOK(nil)
 		default:
 			response = parser.AppendError(nil, "-1")
 		}
