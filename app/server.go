@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path"
@@ -14,17 +15,22 @@ import (
 func main() {
 	dir := flag.String("dir", "/tmp/redis-data", "the path to the directory where the RDB file is stored")
 	dbFilename := flag.String("dbfilename", "rdbfile", "the name of the RDB file")
+	port := flag.Uint("port", 6379, "the port for the server to listen on")
 	flag.Parse()
+	if *port > 65535 {
+		log.Fatalf("Invalid port %d", *port)
+	}
 
 	config := server.Config{
 		Dir:        *dir,
 		DBFilename: *dbFilename,
+		Port:       uint16(*port),
 	}
 
 	stores := createStores(path.Join(config.Dir, config.DBFilename))
 
 	srv := server.NewServer(config, stores)
-	if err := srv.Listen("0.0.0.0:6379"); err != nil {
+	if err := srv.Listen(fmt.Sprintf("0.0.0.0:%d", config.Port)); err != nil {
 		log.Fatal(err)
 	}
 }
