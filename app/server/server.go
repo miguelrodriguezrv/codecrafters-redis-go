@@ -89,7 +89,7 @@ func (s *Server) PingServer(address string) error {
 		return err
 	}
 	response := string(buf[:n])
-	if response != "+PONG" {
+	if response != "+PONG\r\n" {
 		return fmt.Errorf("received invalid PING response: %s", response)
 	}
 	return nil
