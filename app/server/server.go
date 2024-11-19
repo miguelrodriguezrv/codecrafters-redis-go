@@ -30,9 +30,16 @@ type Server struct {
 }
 
 func NewServer(config Config, stores []Store) *Server {
+	var role string
+	if config.ReplicaOf == "" {
+		role = "master"
+	} else {
+		role = "slave"
+	}
+
 	return &Server{
 		config: config,
-		role:   "master",
+		role:   role,
 		stores: stores,
 	}
 }
