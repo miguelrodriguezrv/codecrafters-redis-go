@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
@@ -37,7 +38,7 @@ func NewServer(config Config, stores []Store) *Server {
 		role = "slave"
 	}
 
-	return &Server{
+	srv := &Server{
 		config: config,
 		stores: stores,
 		info: Info{
@@ -46,6 +47,15 @@ func NewServer(config Config, stores []Store) *Server {
 			masterReplOffset: 0,
 		},
 	}
+
+	if config.ReplicaOf != "" {
+		err := srv.PingServer(config.ReplicaOf)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	return srv
 }
 
 func (s *Server) Listen(address string) error {
@@ -63,4 +73,24 @@ func (s *Server) Listen(address string) error {
 
 		go s.handleClient(conn)
 	}
+}
+
+func (s *Server) PingServer(address string) error {
+	log.Printf("Pinging %s\n", address)
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		return err
+	}
+	conn.Write(parser.AppendBulkString(parser.AppendArray(nil, 1), "PING"))
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	response := string(buf[:n])
+	if response != "+PONG" {
+		return fmt.Errorf("received invalid PING response: %s", response)
+	}
+	return nil
 }
