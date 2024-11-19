@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"path"
@@ -47,6 +48,8 @@ func (s *Server) handleClient(conn net.Conn) {
 			response = s.handleSave()
 		case "replconf":
 			response = parser.AppendOK(nil)
+		case "psync":
+			response = s.handlePSync(resp)
 		default:
 			response = parser.AppendError(nil, "-1")
 		}
@@ -141,4 +144,15 @@ func (s *Server) handleSave() []byte {
 	}
 	log.Printf("Successfully saved RDB to %s\n", path.Join(s.config.Dir, s.config.DBFilename))
 	return parser.AppendString(nil, "OK")
+}
+
+func (s *Server) handlePSync(resp [][]byte) []byte {
+	if len(resp) < 3 {
+		log.Println("Not enough argument for PSYNC")
+		return parser.AppendError(nil, "-1")
+	}
+	if string(resp[1]) == "?" {
+		return parser.AppendString(nil, fmt.Sprintf("FULLRESYNC %s %d", s.info.masterReplID, s.info.masterReplOffset))
+	}
+	return nil
 }
