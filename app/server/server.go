@@ -28,6 +28,7 @@ type Store interface {
 type Server struct {
 	config Config
 	info   Info
+	slaves []net.Conn
 	stores []Store
 }
 
@@ -93,6 +94,7 @@ func (s *Server) SetupReplica(replica string) error {
 	if err != nil {
 		return err
 	}
+	go s.handleClient(conn)
 	return nil
 }
 
