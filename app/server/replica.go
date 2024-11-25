@@ -203,6 +203,8 @@ func (s *Server) handleMaster(conn net.Conn) {
 	for !s.ready {
 		time.Sleep(10 * time.Millisecond)
 	}
+	log.Println("Listening to master")
+outerLoop:
 	for {
 		n, err := conn.Read(tmp)
 		if err != nil {
@@ -227,14 +229,16 @@ func (s *Server) handleMaster(conn net.Conn) {
 			}
 			buf = remainder
 			if len(req) == 0 {
-				continue
+				continue outerLoop
 			}
-			log.Printf("%s", req)
+			log.Printf("Request received: %s", req)
 			switch strings.ToLower(string(req[0])) {
 			case "set":
 				s.handleSet(req)
 			case "replconf":
-				s.handleREPLConf()
+				response := s.handleREPLConf()
+				conn.Write(response)
+
 			}
 		}
 	}

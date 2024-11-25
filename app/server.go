@@ -38,7 +38,6 @@ func main() {
 	}
 
 	srv := server.NewServer(config, path.Join(config.Dir, config.DBFilename))
-	log.Printf("Setup stores")
 
 	if err := srv.Listen(fmt.Sprintf("0.0.0.0:%d", config.Port)); err != nil {
 		log.Fatal(err)

@@ -21,6 +21,7 @@ func (s *Server) handleClient(conn net.Conn) {
 	buf := make([]byte, 0, 1024)
 	tmp := make([]byte, 1024)
 
+outerLoop:
 	for {
 		n, err := conn.Read(tmp)
 		if err != nil {
@@ -31,50 +32,55 @@ func (s *Server) handleClient(conn net.Conn) {
 			return
 		}
 		buf = append(buf, tmp[:n]...)
-		req, leftover, err := parser.ParseCommand(buf[:n])
-		if err != nil {
-			conn.Write(parser.AppendError(nil, err.Error()))
-			conn.Close()
-			return
-		}
-		buf = leftover
-
-		if len(req) == 0 {
-			continue
-		}
-		var response []byte
-		switch strings.ToLower(string(req[0])) {
-		case "ping":
-			response = parser.AppendString(nil, "PONG")
-		case "echo":
-			response = parser.AppendString(nil, string(req[1]))
-		case "config":
-			response = s.handleConfig(req)
-		case "info":
-			response = s.handleInfo(req)
-		case "get":
-			response = s.handleGet(req)
-		case "set":
-			response = s.handleSet(req)
-			s.PropagateCommand(req)
-		case "keys":
-			response = s.handleKeys(req)
-		case "save":
-			response = s.handleSave()
-		case "replconf":
-
-		case "psync":
-			if s.info.role != "master" {
-				response = parser.AppendError(nil, "-1")
-			} else {
-				s.handlePSync(req, conn)
+		for len(buf) > 0 {
+			req, remainder, err := parser.ParseCommand(buf[:n])
+			if err != nil {
+				if err == parser.ErrIncomplete {
+					// Command is incomplete, wait for more data
+					break
+				}
+				log.Printf("Error parsing command: %v", err)
+				conn.Write(parser.AppendError(nil, err.Error()))
+				conn.Close()
 				return
-
 			}
-		default:
-			response = parser.AppendError(nil, "-1")
+			buf = remainder
+			if len(req) == 0 {
+				continue outerLoop
+			}
+			var response []byte
+			switch strings.ToLower(string(req[0])) {
+			case "ping":
+				response = parser.AppendString(nil, "PONG")
+			case "echo":
+				response = parser.AppendString(nil, string(req[1]))
+			case "config":
+				response = s.handleConfig(req)
+			case "info":
+				response = s.handleInfo(req)
+			case "get":
+				response = s.handleGet(req)
+			case "set":
+				response = s.handleSet(req)
+				s.PropagateCommand(req)
+			case "keys":
+				response = s.handleKeys(req)
+			case "save":
+				response = s.handleSave()
+			case "replconf":
+				response = s.handleREPLConf()
+			case "psync":
+				if s.info.role != "master" {
+					response = parser.AppendError(nil, "-1")
+				} else {
+					s.handlePSync(req, conn)
+					return
+				}
+			default:
+				response = parser.AppendError(nil, "-1")
+			}
+			conn.Write(response)
 		}
-		conn.Write(response)
 	}
 }
 
