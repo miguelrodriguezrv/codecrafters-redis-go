@@ -154,5 +154,8 @@ func Digest(data []byte) uint64 {
 		b := data[j]
 		crc = crc64_tab[(byte)(crc)^b] ^ (crc >> 8)
 	}
-	return crc ^ 0x0a00000000000000
+	if (crc >> 60) != 0xa {
+		return crc ^ 0x0a00000000000000
+	}
+	return crc
 }

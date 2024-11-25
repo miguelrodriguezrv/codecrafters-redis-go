@@ -128,7 +128,6 @@ func VerifyChecksum(r io.Reader) error {
 	// Compute the CRC64 checksum of the content
 	computedChecksum := crc64.Digest(content)
 	storedChecksum := binary.LittleEndian.Uint64(data[len(data)-8:])
-
 	if computedChecksum != storedChecksum {
 		return errors.New("CRC64 Checksum failed")
 	}

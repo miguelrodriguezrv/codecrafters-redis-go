@@ -18,67 +18,69 @@ const (
 
 var ErrInvalidArrayAst = errors.New("invalid array, expected *")
 var ErrInvalidArrayCRLF = errors.New("invalid array, expected \\r\\n")
+var ErrIncomplete = errors.New("incomplete command")
 
-func ParseCommand(packet []byte) ([][]byte, error) {
+func ParseCommand(packet []byte) ([][]byte, []byte, error) {
 	if len(packet) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if packet[0] != Array {
-		return nil, ErrInvalidArrayAst
+		return nil, packet, ErrInvalidArrayAst
 	}
 	args := make([][]byte, 0)
 	for i := 1; i < len(packet); i++ {
 		if packet[i] == '\n' {
 			if packet[i-1] != '\r' {
-				return nil, ErrInvalidArrayCRLF
+				return nil, packet, ErrInvalidArrayCRLF
 			}
 			count, err := strconv.Atoi(string(packet[1 : i-1]))
 			if err != nil {
-				return nil, errors.New("invalid bulk count: '" + string(packet[1:i-1]) + "' - " + err.Error())
+				return nil, packet, errors.New("invalid bulk count: '" + string(packet[1:i-1]) + "' - " + err.Error())
 			}
 			if count < 0 {
-				return nil, errors.New("invalid array length: negative number not allowed")
+				return nil, packet, errors.New("invalid array length: negative number not allowed")
 			}
 			if count == 0 {
-				return nil, nil
+				return nil, packet[i:], nil
 			}
 			i++
 		nextArg:
 			for j := 0; j < count; j++ {
 				if i >= len(packet) {
-					break
+					return nil, packet, ErrIncomplete
 				}
 				if packet[i] != '$' {
-					return nil, errors.New("expected '$', got '" + string(packet[i]) + "'")
+					return nil, packet, errors.New("expected '$', got '" + string(packet[i]) + "'")
 				}
 				for s := i + 1; i < len(packet); i++ {
 					if packet[i] == '\n' {
 						if packet[i-1] != '\r' {
-							return nil, ErrInvalidArrayCRLF
+							return nil, packet, ErrInvalidArrayCRLF
 						}
 						n, err := strconv.Atoi(string(packet[s : i-1]))
 						if err != nil || count < 0 {
-							return nil, errors.New("Invalid bulk count: '" + string(packet[1:i-1]) + "' - " + err.Error())
+							return nil, packet, errors.New("Invalid bulk count: '" + string(packet[1:i-1]) + "' - " + err.Error())
 						}
 						i++
 						if len(packet)-i >= n+2 {
 							if packet[i+n] != '\r' || packet[i+n+1] != '\n' {
-								return nil, ErrInvalidArrayCRLF
+								return nil, packet, ErrInvalidArrayCRLF
 							}
 							args = append(args, packet[i:i+n])
 							i += n + 2
 							if j == count-1 {
-								return args, nil
+								return args, packet[i:], nil
 							}
 							continue nextArg
 						}
-
+						return nil, packet, ErrIncomplete
 					}
 				}
+				return nil, packet, ErrIncomplete
 			}
 		}
 	}
-	return nil, nil
+	return nil, packet, ErrIncomplete
 }
 
 // appendPrefix will append a "$3\r\n" style redis prefix for a message.

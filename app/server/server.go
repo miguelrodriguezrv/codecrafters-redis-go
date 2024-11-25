@@ -6,10 +6,12 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
+	"path"
+	"sync"
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
+	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
 const (
@@ -26,13 +28,15 @@ type Store interface {
 }
 
 type Server struct {
-	config Config
-	info   Info
-	slaves []net.Conn
-	stores []Store
+	config     Config
+	info       Info
+	ready      bool
+	slaveMutex sync.Mutex
+	slaves     []net.Conn
+	stores     []Store
 }
 
-func NewServer(config Config, stores []Store) *Server {
+func NewServer(config Config, rdbPath string) *Server {
 	var role string
 	if config.ReplicaOf == "" {
 		role = "master"
@@ -42,7 +46,7 @@ func NewServer(config Config, stores []Store) *Server {
 
 	srv := &Server{
 		config: config,
-		stores: stores,
+		stores: createStores(rdbPath),
 		info: Info{
 			role:             role,
 			masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
@@ -51,13 +55,40 @@ func NewServer(config Config, stores []Store) *Server {
 	}
 
 	if config.ReplicaOf != "" {
-		err := srv.SetupReplica(config.ReplicaOf)
+		err := srv.SetupReplica(config.ReplicaOf, path.Join(config.Dir, config.DBFilename))
 		if err != nil {
 			log.Fatal(err)
 		}
+		srv.stores = createStores(rdbPath)
 	}
 
+	srv.ready = true
+
 	return srv
+}
+
+func createStores(rdbPath string) []Store {
+	stores := []Store{store.NewInMemoryStore()}
+	if file, err := os.Open(rdbPath); err == nil {
+		databases, err := persistence.LoadRDB(file)
+		if err != nil {
+			log.Fatalf("Error loading RDB file: %v", err)
+		}
+		file.Seek(0, 0)
+		if err := persistence.VerifyChecksum(file); err != nil {
+			log.Fatalf("Error veryfing RDB file: %v", err)
+		}
+		if len(databases) > 0 {
+			stores = make([]Store, len(databases))
+			for _, db := range databases {
+				store := store.NewInMemoryStore()
+				store.Load(db.Entries)
+				stores[db.Index] = store
+			}
+		}
+		log.Println("Successfully loaded", rdbPath)
+	}
+	return stores
 }
 
 func (s *Server) Listen(address string) error {
@@ -75,95 +106,6 @@ func (s *Server) Listen(address string) error {
 
 		go s.handleClient(conn)
 	}
-}
-
-func (s *Server) SetupReplica(replica string) error {
-	conn, err := net.Dial("tcp", replica)
-	if err != nil {
-		return err
-	}
-	err = s.PingServer(conn)
-	if err != nil {
-		return err
-	}
-	err = s.SendReplConf(conn)
-	if err != nil {
-		return err
-	}
-	err = s.PSync(conn)
-	if err != nil {
-		return err
-	}
-	go s.handleClient(conn)
-	return nil
-}
-
-func (s *Server) PingServer(conn net.Conn) error {
-	_, err := conn.Write(parser.AppendBulkString(parser.AppendArray(nil, 1), "PING"))
-	if err != nil {
-		return err
-	}
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		conn.Close()
-		return err
-	}
-	response := string(buf[:n])
-	if response != "+PONG\r\n" {
-		return fmt.Errorf("received invalid PING response: %s", response)
-	}
-	return nil
-}
-
-func (s *Server) SendReplConf(conn net.Conn) error {
-	_, err := conn.Write(parser.StringArrayCommand([]string{
-		"REPLCONF",
-		"listening-port",
-		strconv.Itoa(int(s.config.Port)),
-	}))
-	if err != nil {
-		return err
-	}
-	err = readOK(conn)
-	if err != nil {
-		return fmt.Errorf("received invalid REPLCONF response: %s", err)
-	}
-
-	_, err = conn.Write(parser.StringArrayCommand([]string{
-		"REPLCONF",
-		"capa",
-		"psync2",
-	}))
-	if err != nil {
-		return err
-	}
-
-	err = readOK(conn)
-	if err != nil {
-		return fmt.Errorf("received invalid REPLCONF response: %s", err)
-	}
-	return nil
-}
-
-func (s *Server) PSync(conn net.Conn) error {
-	_, err := conn.Write(parser.StringArrayCommand([]string{
-		"PSYNC",
-		"?",
-		"-1",
-	}))
-	if err != nil {
-		return err
-	}
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		conn.Close()
-		return err
-	}
-	response := string(buf[:n])
-	log.Println(response)
-	return nil
 }
 
 func readOK(conn net.Conn) error {

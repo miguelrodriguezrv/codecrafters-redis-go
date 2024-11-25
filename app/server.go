@@ -8,9 +8,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 	"github.com/codecrafters-io/redis-starter-go/app/server"
-	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
 func main() {
@@ -34,33 +32,15 @@ func main() {
 		Port:       uint16(*port),
 		ReplicaOf:  replica,
 	}
+	err := os.MkdirAll(config.Dir, 0750)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	stores := createStores(path.Join(config.Dir, config.DBFilename))
+	srv := server.NewServer(config, path.Join(config.Dir, config.DBFilename))
+	log.Printf("Setup stores")
 
-	srv := server.NewServer(config, stores)
 	if err := srv.Listen(fmt.Sprintf("0.0.0.0:%d", config.Port)); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func createStores(rdbPath string) []server.Store {
-	stores := []server.Store{store.NewInMemoryStore()}
-	if file, err := os.Open(rdbPath); err == nil {
-		databases, err := persistence.LoadRDB(file)
-		if err != nil {
-			log.Fatalf("Error loading RDB file: %v", err)
-		}
-		file.Seek(0, 0)
-		if err := persistence.VerifyChecksum(file); err != nil {
-			log.Fatalf("Error veryfing RDB file: %v", err)
-		}
-		stores = make([]server.Store, len(databases))
-		for _, db := range databases {
-			store := store.NewInMemoryStore()
-			store.Load(db.Entries)
-			stores[db.Index] = store
-		}
-		log.Println("Successfully loaded", rdbPath)
-	}
-	return stores
 }

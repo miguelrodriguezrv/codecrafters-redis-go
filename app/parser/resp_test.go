@@ -63,11 +63,35 @@ func TestParseCommand(t *testing.T) {
 			want:    nil,
 			wantErr: errors.New("invalid array length: negative number not allowed"),
 		},
+		{
+			name:    "incomplete array length",
+			input:   []byte("*1"),
+			want:    nil,
+			wantErr: ErrIncomplete,
+		},
+		{
+			name:    "incomplete bulk string length",
+			input:   []byte("*1\r\n$"),
+			want:    nil,
+			wantErr: ErrIncomplete,
+		},
+		{
+			name:    "incomplete bulk string content",
+			input:   []byte("*1\r\n$4\r\nPI"),
+			want:    nil,
+			wantErr: ErrIncomplete,
+		},
+		{
+			name:    "partial second argument",
+			input:   []byte("*2\r\n$4\r\nPING\r\n$3\r\nfo"),
+			want:    nil,
+			wantErr: ErrIncomplete,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseCommand(tt.input)
+			got, _, err := ParseCommand(tt.input)
 
 			// Check error
 			if tt.wantErr != nil {

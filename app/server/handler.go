@@ -8,26 +8,37 @@ import (
 	"net"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
 func (s *Server) handleClient(conn net.Conn) {
+	buf := make([]byte, 0, 1024)
+	tmp := make([]byte, 1024)
+
 	for {
-		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+		n, err := conn.Read(tmp)
 		if err != nil {
+			if err != io.EOF {
+				log.Println("Error reading from client:", err)
+			}
 			conn.Close()
 			return
 		}
-		req, err := parser.ParseCommand(buf[:n])
+		buf = append(buf, tmp[:n]...)
+		req, leftover, err := parser.ParseCommand(buf[:n])
 		if err != nil {
 			conn.Write(parser.AppendError(nil, err.Error()))
+			conn.Close()
 			return
 		}
+		buf = leftover
+
 		if len(req) == 0 {
 			continue
 		}
@@ -162,7 +173,7 @@ func (s *Server) handleSave() []byte {
 
 func (s *Server) handlePSync(req [][]byte, conn net.Conn) {
 	if len(req) < 3 {
-		log.Println("Not enough argument for PSYNC")
+		log.Println("Not enough arguments for PSYNC")
 		conn.Write(parser.AppendError(nil, "-1"))
 	}
 	if string(req[1]) == "?" {
@@ -171,7 +182,9 @@ func (s *Server) handlePSync(req [][]byte, conn net.Conn) {
 		if err != nil {
 			log.Printf("error handling PSYNC: %v", err)
 		}
+		s.slaveMutex.Lock()
 		s.slaves = append(s.slaves, conn)
+		s.slaveMutex.Unlock()
 	}
 }
 
@@ -220,10 +233,40 @@ func (s *Server) PropagateCommand(req [][]byte) {
 	for _, r := range req {
 		command = parser.AppendBulkString(command, string(r))
 	}
+	var mu sync.Mutex
+	var failedSlaves []int
+	var wg sync.WaitGroup
+
+	s.slaveMutex.Lock()
+	defer s.slaveMutex.Unlock()
 	for i, conn := range s.slaves {
-		_, err := conn.Write(command)
-		if err != nil {
-			log.Printf("Error propagating command to server [%d] -> %v", i, err)
+		wg.Add(1)
+
+		go func(i int, conn net.Conn) {
+			defer wg.Done()
+
+			_, err := conn.Write(command)
+			if err != nil {
+				log.Printf("Error propagating command to server [%d] -> %v", i, err)
+				mu.Lock()
+				failedSlaves = append(failedSlaves, i)
+				mu.Unlock()
+			}
+		}(i, conn)
+	}
+
+	wg.Wait()
+
+	if len(failedSlaves) > 0 {
+		newSlaves := make([]net.Conn, 0, len(s.slaves)-len(failedSlaves))
+		for i, conn := range s.slaves {
+			if !slices.Contains(failedSlaves, i) {
+				newSlaves = append(newSlaves, conn)
+			} else {
+				conn.Close()
+				log.Printf("Closed connection to server [%d]", i)
+			}
 		}
+		s.slaves = newSlaves
 	}
 }
