@@ -72,11 +72,13 @@ func createStores(rdbPath string) []Store {
 	if file, err := os.Open(rdbPath); err == nil {
 		databases, err := persistence.LoadRDB(file)
 		if err != nil {
-			log.Fatalf("Error loading RDB file: %v", err)
+			log.Printf("Error loading RDB file: %v", err)
+			return stores
 		}
 		file.Seek(0, 0)
 		if err := persistence.VerifyChecksum(file); err != nil {
-			log.Fatalf("Error veryfing RDB file: %v", err)
+			log.Printf("Error veryfing RDB file: %v", err)
+			return stores
 		}
 		if len(databases) > 0 {
 			stores = make([]Store, len(databases))

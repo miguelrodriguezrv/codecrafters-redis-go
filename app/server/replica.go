@@ -121,26 +121,44 @@ func (s *Server) PSync(conn net.Conn, rdbPath string) error {
 	offset := parts[2]
 	log.Printf("FULLRESYNC received: replID=%s, offset=%s", replID, offset)
 
-	// If no leftover data, proceed to read the RDB file from the connection
-	return readFullRDB(io.MultiReader(bytes.NewReader(lines[1]), conn), rdbPath)
+	return readFullRDB(conn, lines[1], rdbPath)
 }
 
-func readFullRDB(reader io.Reader, rdbPath string) error {
+func readFullRDB(conn net.Conn, leftover []byte, rdbPath string) error {
 	// Read the length header
 	var lengthStr string
-	buf := make([]byte, 1)
-	for {
-		_, err := reader.Read(buf)
-		if err != nil {
-			return fmt.Errorf("failed to read length header: %v", err)
+	var lengthStrComplete bool
+	// Process leftover if any
+	if len(leftover) > 0 {
+		// Look for complete length header in leftover
+		if idx := bytes.Index(leftover, []byte("\r\n")); idx >= 0 {
+			lengthStr = string(leftover[:idx])
+			// Any remaining data after \r\n is start of RDB
+			leftover = leftover[idx+2:]
+			lengthStrComplete = true
+		} else {
+			// Incomplete header in leftover
+			lengthStr = string(leftover)
+			leftover = nil
+			// Continue reading from conn
 		}
-		if buf[0] == '\n' && len(lengthStr) > 0 && lengthStr[len(lengthStr)-1] == '\r' {
-			lengthStr = lengthStr[:len(lengthStr)-1]
-			break
-		}
-		lengthStr += string(buf[0])
 	}
 
+	// If we don't have complete length header, read rest from conn
+	if !lengthStrComplete {
+		buf := make([]byte, 1)
+		for {
+			_, err := conn.Read(buf)
+			if err != nil {
+				return fmt.Errorf("failed to read length header: %v", err)
+			}
+			if buf[0] == '\n' && len(lengthStr) > 0 && lengthStr[len(lengthStr)-1] == '\r' {
+				lengthStr = lengthStr[:len(lengthStr)-1]
+				break
+			}
+			lengthStr += string(buf[0])
+		}
+	}
 	// Parse the length
 	if !strings.HasPrefix(lengthStr, "$") {
 		return fmt.Errorf("invalid RDB length prefix: %s", lengthStr)
@@ -159,11 +177,23 @@ func readFullRDB(reader io.Reader, rdbPath string) error {
 	}
 	defer outputFile.Close()
 
+	// Write leftover data if any
+	if len(leftover) > 0 {
+		if int64(len(leftover)) > length {
+			return fmt.Errorf("leftover data exceeds expected RDB length")
+		}
+		if _, err := outputFile.Write(leftover); err != nil {
+			return fmt.Errorf("failed to write leftover data: %v", err)
+		}
+		length -= int64(len(leftover))
+	}
+
 	// Read the file content
 	remaining := length
-	buf = make([]byte, 8192)
+	buf := make([]byte, 8192)
 	for remaining > 0 {
-		n, err := reader.Read(buf[:min(remaining, int64(len(buf)))])
+		toRead := min(remaining, int64(len(buf)))
+		n, err := conn.Read(buf[:toRead])
 		if err != nil {
 			if err == io.EOF {
 				return fmt.Errorf("EOF before reading complete RDB file: %d bytes remaining", remaining)
