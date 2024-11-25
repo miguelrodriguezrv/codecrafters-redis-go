@@ -233,6 +233,8 @@ func (s *Server) handleMaster(conn net.Conn) {
 			switch strings.ToLower(string(req[0])) {
 			case "set":
 				s.handleSet(req)
+			case "replconf":
+				s.handleREPLConf()
 			}
 		}
 	}

@@ -62,11 +62,7 @@ func (s *Server) handleClient(conn net.Conn) {
 		case "save":
 			response = s.handleSave()
 		case "replconf":
-			if s.info.role != "master" {
-				response = parser.AppendError(nil, "-1")
-			} else {
-				response = parser.AppendOK(nil)
-			}
+
 		case "psync":
 			if s.info.role != "master" {
 				response = parser.AppendError(nil, "-1")
@@ -169,6 +165,18 @@ func (s *Server) handleSave() []byte {
 	}
 	log.Printf("Successfully saved RDB to %s\n", path.Join(s.config.Dir, s.config.DBFilename))
 	return parser.AppendOK(nil)
+}
+
+func (s *Server) handleREPLConf() []byte {
+	if s.info.role != "master" {
+		return parser.StringArrayCommand([]string{
+			"REPLCONF",
+			"ACK",
+			strconv.FormatInt(s.info.masterReplOffset, 10),
+		})
+	}
+	return parser.AppendOK(nil)
+
 }
 
 func (s *Server) handlePSync(req [][]byte, conn net.Conn) {
