@@ -121,19 +121,8 @@ func (s *Server) PSync(conn net.Conn, rdbPath string) error {
 	offset := parts[2]
 	log.Printf("FULLRESYNC received: replID=%s, offset=%s", replID, offset)
 
-	// Check for leftover data (part of the RDB file or the $length header)
-	if len(lines[1]) > 0 {
-		// Process the leftover data (lines[1]) as the beginning of the RDB stream
-		return readRDBWithLeftover(conn, lines[1], rdbPath)
-	}
-
 	// If no leftover data, proceed to read the RDB file from the connection
-	return readFullRDB(conn, rdbPath)
-}
-
-func readRDBWithLeftover(conn net.Conn, leftover []byte, rdbPath string) error {
-	reader := io.MultiReader(bytes.NewReader(leftover), conn)
-	return readFullRDB(reader, rdbPath)
+	return readFullRDB(io.MultiReader(bytes.NewReader(lines[1]), conn), rdbPath)
 }
 
 func readFullRDB(reader io.Reader, rdbPath string) error {
@@ -190,7 +179,6 @@ func readFullRDB(reader io.Reader, rdbPath string) error {
 		remaining -= int64(n)
 		log.Printf("Read %d/%d bytes", length-remaining, length)
 	}
-
 	log.Println("RDB file received successfully")
 	return nil
 }
@@ -215,7 +203,9 @@ outerLoop:
 			}
 			return
 		}
+		log.Printf("Read %d bytes from master: %q", n, tmp[:n])
 		buf = append(buf, tmp[:n]...)
+		log.Printf("Current buffer contents: %q", buf)
 		for len(buf) > 0 {
 			req, remainder, err := parser.ParseCommand(buf)
 			if err != nil {
@@ -227,8 +217,10 @@ outerLoop:
 				conn.Write(parser.AppendError(nil, err.Error()))
 				return
 			}
+			processedBytes := len(buf) - len(remainder)
 			buf = remainder
 			if len(req) == 0 {
+				log.Println("Empty request received")
 				continue outerLoop
 			}
 			log.Printf("Request received: %s", req)
@@ -236,10 +228,17 @@ outerLoop:
 			case "set":
 				s.handleSet(req)
 			case "replconf":
+				if len(req) >= 2 {
+					log.Printf("REPLCONF subcommand: %s", req[1])
+				}
 				response := s.handleREPLConf()
-				conn.Write(response)
-
+				log.Printf("Sending REPLCONF response: %q", response)
+				_, err := conn.Write(response)
+				if err != nil {
+					log.Printf("Error writing REPLCONF response: %v", err)
+				}
 			}
+			s.info.masterReplOffset += int64(processedBytes)
 		}
 	}
 }
