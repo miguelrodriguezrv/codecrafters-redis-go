@@ -93,7 +93,7 @@ func (s *Server) PSync(conn net.Conn, rdbPath string) error {
 	if err != nil {
 		return err
 	}
-	buf := make([]byte, 1024)
+	buf := make([]byte, 128)
 	n, err := conn.Read(buf)
 	if err != nil {
 		conn.Close()

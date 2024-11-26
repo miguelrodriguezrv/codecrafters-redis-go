@@ -76,6 +76,12 @@ outerLoop:
 					s.handlePSync(req, conn)
 					return
 				}
+			case "wait":
+				if s.info.role == "master" {
+					response = s.handleWait(req)
+				} else {
+					response = parser.AppendError(nil, "-1")
+				}
 			default:
 				response = parser.AppendError(nil, "-1")
 			}
@@ -283,4 +289,19 @@ func (s *Server) PropagateCommand(req [][]byte) {
 		}
 		s.slaves = newSlaves
 	}
+}
+
+func (s *Server) handleWait(req [][]byte) []byte {
+	if len(req) < 3 {
+		return parser.AppendError(nil, "-1")
+	}
+	repAmount, err := strconv.Atoi(string(req[1]))
+	if err != nil {
+		log.Printf("Invalid WAIT amount: %v", err)
+		return parser.AppendError(nil, "-1")
+	}
+	if repAmount == 0 {
+		return parser.AppendInt(nil, 0)
+	}
+	return parser.AppendInt(nil, int64(repAmount))
 }
