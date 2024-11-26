@@ -303,5 +303,5 @@ func (s *Server) handleWait(req [][]byte) []byte {
 	if repAmount == 0 {
 		return parser.AppendInt(nil, 0)
 	}
-	return parser.AppendInt(nil, int64(repAmount))
+	return parser.AppendInt(nil, int64(len(s.slaves)))
 }
