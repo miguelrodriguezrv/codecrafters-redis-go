@@ -65,6 +65,8 @@ outerLoop:
 			case "set":
 				response = s.handleSet(req)
 				s.PropagateCommand(req)
+			case "type":
+				response = s.handleType(req)
 			case "keys":
 				response = s.handleKeys(req)
 			case "save":
@@ -148,6 +150,14 @@ func (s *Server) handleSet(req [][]byte) []byte {
 		return parser.AppendError(nil, "1")
 	}
 	return parser.AppendString(nil, "OK")
+}
+
+func (s *Server) handleType(req [][]byte) []byte {
+	if len(req) < 2 {
+		log.Println("Not enough arguments for TYPE")
+		return parser.AppendError(nil, "-1")
+	}
+	return parser.AppendString(nil, s.stores[0].Type(string(req[1])))
 }
 
 func (s *Server) handleKeys(req [][]byte) []byte {

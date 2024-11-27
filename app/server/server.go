@@ -25,6 +25,7 @@ type Store interface {
 	Load(entries []persistence.Entry)
 	Get(key string) ([]byte, bool)
 	Set(key string, value []byte, expiry int64) error
+	Type(key string) string
 	Export() []persistence.Entry
 }
 

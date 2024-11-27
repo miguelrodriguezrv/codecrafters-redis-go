@@ -8,9 +8,17 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
+type Type string
+
+const (
+	StringType Type = "string"
+	StreamType Type = "stream"
+)
+
 type Item struct {
-	value  []byte
-	expiry int64
+	value    []byte
+	itemType Type
+	expiry   int64
 }
 
 type InMemoryStore struct {
@@ -59,10 +67,21 @@ func (s *InMemoryStore) Set(key string, value []byte, expiry int64) error {
 		expirationTime = time.Now().UnixMilli() + expiry
 	}
 	s.items[key] = Item{
-		value:  value,
-		expiry: expirationTime,
+		value:    value,
+		itemType: StringType,
+		expiry:   expirationTime,
 	}
 	return nil
+}
+
+func (s *InMemoryStore) Type(key string) string {
+	s.mu.RLock()
+	item, ok := s.items[key]
+	s.mu.RUnlock()
+	if !ok {
+		return "none"
+	}
+	return string(item.itemType)
 }
 
 func (s *InMemoryStore) cleanupExpiredItems() {
