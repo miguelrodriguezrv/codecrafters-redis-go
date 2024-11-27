@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
@@ -68,7 +70,7 @@ outerLoop:
 			case "save":
 				response = s.handleSave()
 			case "replconf":
-				response = s.handleREPLConf()
+				response = s.handleREPLConf(req)
 			case "psync":
 				if s.info.role != "master" {
 					response = parser.AppendError(nil, "-1")
@@ -85,7 +87,9 @@ outerLoop:
 			default:
 				response = parser.AppendError(nil, "-1")
 			}
-			conn.Write(response)
+			if len(response) > 0 {
+				conn.Write(response)
+			}
 		}
 	}
 }
@@ -179,13 +183,12 @@ func (s *Server) handleSave() []byte {
 	return parser.AppendOK(nil)
 }
 
-func (s *Server) handleREPLConf() []byte {
+func (s *Server) handleREPLConf(req [][]byte) []byte {
 	if s.info.role != "master" {
-		return parser.StringArrayCommand([]string{
-			"REPLCONF",
-			"ACK",
-			strconv.FormatInt(s.info.masterReplOffset, 10),
-		})
+		if string(req[1]) == "GETACK" {
+			return parser.EncodeStringArray("REPLCONF", "ACK", strconv.FormatInt(s.info.masterReplOffset.Load(), 10))
+		}
+		return parser.AppendError(nil, "-1")
 	}
 	return parser.AppendOK(nil)
 
@@ -197,13 +200,18 @@ func (s *Server) handlePSync(req [][]byte, conn net.Conn) {
 		conn.Write(parser.AppendError(nil, "-1"))
 	}
 	if string(req[1]) == "?" {
-		conn.Write(parser.AppendString(nil, fmt.Sprintf("FULLRESYNC %s %d", s.info.masterReplID, s.info.masterReplOffset)))
+		conn.Write(parser.AppendString(nil, fmt.Sprintf("FULLRESYNC %s %d", s.info.masterReplID, s.info.masterReplOffset.Load())))
 		err := s.FullResync(conn)
 		if err != nil {
 			log.Printf("error handling PSYNC: %v", err)
 		}
 		s.slaveMutex.Lock()
-		s.slaves = append(s.slaves, conn)
+		var offset atomic.Int64
+		offset.Store(s.info.masterReplOffset.Load())
+		s.slaves = append(s.slaves, Slave{
+			conn:   conn,
+			offset: &offset,
+		})
 		s.slaveMutex.Unlock()
 	}
 }
@@ -253,13 +261,16 @@ func (s *Server) PropagateCommand(req [][]byte) {
 	for _, r := range req {
 		command = parser.AppendBulkString(command, string(r))
 	}
+
 	var mu sync.Mutex
 	var failedSlaves []int
 	var wg sync.WaitGroup
 
 	s.slaveMutex.Lock()
 	defer s.slaveMutex.Unlock()
-	for i, conn := range s.slaves {
+	s.info.masterReplOffset.Add(int64(len(command)))
+	log.Printf("Propagating %s to %d slaves", req, len(s.slaves))
+	for i, slave := range s.slaves {
 		wg.Add(1)
 
 		go func(i int, conn net.Conn) {
@@ -272,23 +283,25 @@ func (s *Server) PropagateCommand(req [][]byte) {
 				failedSlaves = append(failedSlaves, i)
 				mu.Unlock()
 			}
-		}(i, conn)
+			log.Printf("Sent command to %s -> %s", slave.conn.RemoteAddr(), req)
+		}(i, slave.conn)
 	}
 
 	wg.Wait()
 
 	if len(failedSlaves) > 0 {
-		newSlaves := make([]net.Conn, 0, len(s.slaves)-len(failedSlaves))
-		for i, conn := range s.slaves {
+		newSlaves := make([]Slave, 0, len(s.slaves)-len(failedSlaves))
+		for i, slave := range s.slaves {
 			if !slices.Contains(failedSlaves, i) {
-				newSlaves = append(newSlaves, conn)
+				newSlaves = append(newSlaves, slave)
 			} else {
-				conn.Close()
+				slave.conn.Close()
 				log.Printf("Closed connection to server [%d]", i)
 			}
 		}
 		s.slaves = newSlaves
 	}
+	log.Println("Finished propagation")
 }
 
 func (s *Server) handleWait(req [][]byte) []byte {
@@ -297,11 +310,62 @@ func (s *Server) handleWait(req [][]byte) []byte {
 	}
 	repAmount, err := strconv.Atoi(string(req[1]))
 	if err != nil {
-		log.Printf("Invalid WAIT amount: %v", err)
+		log.Printf("Invalid WAIT replica amount: %v", err)
 		return parser.AppendError(nil, "-1")
 	}
-	if repAmount == 0 {
-		return parser.AppendInt(nil, 0)
+	timeout, err := strconv.Atoi(string(req[2]))
+	if err != nil {
+		log.Printf("Invalid WAIT timeout: %v", err)
+		return parser.AppendError(nil, "-1")
 	}
-	return parser.AppendInt(nil, int64(len(s.slaves)))
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	log.Printf("Waiting for %d for %dms", repAmount, timeout)
+	s.slaveMutex.Lock()
+	defer s.slaveMutex.Unlock()
+	var count atomic.Int64
+	command := parser.EncodeStringArray("REPLCONF", "GETACK", "*")
+	var wg sync.WaitGroup
+	for _, slave := range s.slaves {
+		if slave.offset.Load() == s.info.masterReplOffset.Load() {
+			count.Add(1)
+			continue
+		}
+		wg.Add(1)
+		go func(slave Slave) {
+			defer wg.Done()
+			_, err := slave.conn.Write(command)
+			if err != nil {
+				log.Printf("Error sending REPLCONF ACK *: %v", err)
+				return
+			}
+
+			buf := make([]byte, 128)
+			slave.conn.SetReadDeadline(deadline)
+			defer slave.conn.SetReadDeadline(time.Time{})
+			n, err := slave.conn.Read(buf)
+			if err != nil {
+				log.Printf("Error REPLCONF ACK response: %v", err)
+				return
+			}
+			count.Add(1)
+			req, _, err := parser.ParseCommand(buf[:n])
+			if err != nil {
+				log.Printf("Error parsing REPLCONF ACK response: %v", err)
+				return
+			}
+			if len(req) < 3 {
+				log.Printf("Error length REPLCONF ACK: %v", req)
+				return
+			}
+			offset, err := strconv.ParseInt(string(req[2]), 10, 64)
+			if err != nil {
+				log.Printf("Invalid offset for REPLCONF ACK: %v", err)
+				return
+			}
+			slave.offset.Store(offset)
+		}(slave)
+	}
+	wg.Wait()
+	log.Printf("Got %d ACKs", count.Load())
+	return parser.AppendInt(nil, count.Load())
 }

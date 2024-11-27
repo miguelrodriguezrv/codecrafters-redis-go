@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
@@ -32,8 +33,13 @@ type Server struct {
 	info       Info
 	ready      bool
 	slaveMutex sync.Mutex
-	slaves     []net.Conn
+	slaves     []Slave
 	stores     []Store
+}
+
+type Slave struct {
+	conn   net.Conn
+	offset *atomic.Int64
 }
 
 func NewServer(config Config, rdbPath string) *Server {
@@ -50,7 +56,7 @@ func NewServer(config Config, rdbPath string) *Server {
 		info: Info{
 			role:             role,
 			masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
-			masterReplOffset: 0,
+			masterReplOffset: &atomic.Int64{},
 		},
 	}
 

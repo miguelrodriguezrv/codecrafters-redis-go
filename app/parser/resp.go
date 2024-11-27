@@ -158,9 +158,9 @@ func stripNewlines(s string) string {
 	return s
 }
 
-func StringArrayCommand(array []string) []byte {
-	b := AppendArray(nil, len(array))
-	for _, str := range array {
+func EncodeStringArray(args ...string) []byte {
+	b := AppendArray(nil, len(args))
+	for _, str := range args {
 		b = AppendBulkString(b, str)
 	}
 	return b

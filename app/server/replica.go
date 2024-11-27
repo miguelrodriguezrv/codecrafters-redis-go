@@ -55,11 +55,7 @@ func (s *Server) PingServer(conn net.Conn) error {
 }
 
 func (s *Server) SendReplConf(conn net.Conn) error {
-	_, err := conn.Write(parser.StringArrayCommand([]string{
-		"REPLCONF",
-		"listening-port",
-		strconv.Itoa(int(s.config.Port)),
-	}))
+	_, err := conn.Write(parser.EncodeStringArray("REPLCONF", "listening-port", strconv.Itoa(int(s.config.Port))))
 	if err != nil {
 		return err
 	}
@@ -68,11 +64,7 @@ func (s *Server) SendReplConf(conn net.Conn) error {
 		return fmt.Errorf("received invalid REPLCONF response: %s", err)
 	}
 
-	_, err = conn.Write(parser.StringArrayCommand([]string{
-		"REPLCONF",
-		"capa",
-		"psync2",
-	}))
+	_, err = conn.Write(parser.EncodeStringArray("REPLCONF", "capa", "psync2"))
 	if err != nil {
 		return err
 	}
@@ -85,11 +77,7 @@ func (s *Server) SendReplConf(conn net.Conn) error {
 }
 
 func (s *Server) PSync(conn net.Conn, rdbPath string) error {
-	_, err := conn.Write(parser.StringArrayCommand([]string{
-		"PSYNC",
-		"?",
-		"-1",
-	}))
+	_, err := conn.Write(parser.EncodeStringArray("PSYNC", "?", "-1"))
 	if err != nil {
 		return err
 	}
@@ -261,14 +249,14 @@ outerLoop:
 				if len(req) >= 2 {
 					log.Printf("REPLCONF subcommand: %s", req[1])
 				}
-				response := s.handleREPLConf()
+				response := s.handleREPLConf(req)
 				log.Printf("Sending REPLCONF response: %q", response)
 				_, err := conn.Write(response)
 				if err != nil {
 					log.Printf("Error writing REPLCONF response: %v", err)
 				}
 			}
-			s.info.masterReplOffset += int64(processedBytes)
+			s.info.masterReplOffset.Add(int64(processedBytes))
 		}
 	}
 }
