@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/store/art"
 )
@@ -19,13 +20,9 @@ func (_ StreamValue) Type() Type {
 	return StreamType
 }
 
-func (s *StreamValue) setLastEntryID(entryID []byte) {
-	entry := strings.Split(string(entryID), "-")
-	// No need to do sanity checks since this entryID passed ValidateEntryID
-	entryTimestamp, _ := strconv.ParseInt(entry[0], 10, 64)
-	entrySequence, _ := strconv.ParseInt(entry[1], 10, 64)
-	s.lastEntryIDTimestamp = entryTimestamp
-	s.lastEntryIDSequence = entrySequence
+func (s *StreamValue) setLastEntryID(timestamp, sequence int64) {
+	s.lastEntryIDTimestamp = timestamp
+	s.lastEntryIDSequence = sequence
 }
 
 func (s *InMemoryStore) SetStream(key string) error {
@@ -59,31 +56,37 @@ func (s *InMemoryStore) AddStreamEntry(key string, entryID []byte, value interfa
 		if err := stream.validateEntryID(EIDTimestamp, EIDSequence); err != nil {
 			return "", err
 		}
-		stream.tree.Insert(entryID, value)
-		stream.setLastEntryID(entryID)
-		return fmt.Sprintf("%d-%d", EIDTimestamp, EIDSequence), nil
+		strEntryID := fmt.Sprintf("%d-%d", EIDTimestamp, EIDSequence)
+		stream.tree.Insert([]byte(strEntryID), value)
+		stream.setLastEntryID(EIDTimestamp, EIDSequence)
+		return strEntryID, nil
 	default:
 		return "", fmt.Errorf("Invalid type for key %s - %v", key, item.value.Type())
 	}
 }
 
 func (s *StreamValue) parseEntryID(entryID []byte) (timestamp int64, sequence int64, err error) {
-	entry := strings.Split(string(entryID), "-")
-	if len(entry) != 2 {
-		return 0, 0, errors.New("ERR Invalid EntryID format")
-	}
-
-	timestamp, err = strconv.ParseInt(entry[0], 10, 64)
-	if err != nil {
-		return 0, 0, errors.New("ERR Invalid EntryID format")
-	}
-
-	if entry[1] == "*" {
+	if string(entryID) == "*" {
+		timestamp = time.Now().UnixMilli()
 		sequence = s.generateEntryIDSequence(timestamp)
 	} else {
-		sequence, err = strconv.ParseInt(entry[1], 10, 64)
+		entry := strings.Split(string(entryID), "-")
+		if len(entry) != 2 {
+			return 0, 0, errors.New("ERR Invalid EntryID format")
+		}
+
+		timestamp, err = strconv.ParseInt(entry[0], 10, 64)
 		if err != nil {
 			return 0, 0, errors.New("ERR Invalid EntryID format")
+		}
+
+		if entry[1] == "*" {
+			sequence = s.generateEntryIDSequence(timestamp)
+		} else {
+			sequence, err = strconv.ParseInt(entry[1], 10, 64)
+			if err != nil {
+				return 0, 0, errors.New("ERR Invalid EntryID format")
+			}
 		}
 	}
 	return timestamp, sequence, err
