@@ -172,6 +172,7 @@ func (s *Server) handleXAdd(req [][]byte) []byte {
 		}
 	}
 	entryID := req[2]
+
 	entryValues := make(map[string]interface{})
 	for i := 0; i < len(req)-3; i = i + 2 {
 		key := string(req[3+i])
@@ -179,7 +180,10 @@ func (s *Server) handleXAdd(req [][]byte) []byte {
 		entryValues[key] = value
 	}
 
-	s.stores[0].AddStreamEntry(key, entryID, entryValues)
+	err := s.stores[0].AddStreamEntry(key, entryID, entryValues)
+	if err != nil {
+		return parser.AppendError(nil, err.Error())
+	}
 	return parser.AppendBulkString(nil, string(entryID))
 }
 
