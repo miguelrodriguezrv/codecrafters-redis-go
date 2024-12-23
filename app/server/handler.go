@@ -65,6 +65,9 @@ outerLoop:
 			case "set":
 				response = s.handleSet(req)
 				s.PropagateCommand(req)
+			case "xadd":
+				response = s.handleXAdd(req)
+				s.PropagateCommand(req)
 			case "type":
 				response = s.handleType(req)
 			case "keys":
@@ -150,6 +153,34 @@ func (s *Server) handleSet(req [][]byte) []byte {
 		return parser.AppendError(nil, "1")
 	}
 	return parser.AppendString(nil, "OK")
+}
+
+func (s *Server) handleXAdd(req [][]byte) []byte {
+	if len(req) < 5 {
+		log.Println("Not enough arguments for XADD")
+		return parser.AppendError(nil, "-1")
+	}
+	key := string(req[1])
+	switch s.stores[0].Type(key) {
+	case "string":
+		log.Printf("XADD for key %s - Already exists as string type", key)
+		return parser.AppendError(nil, "1")
+	case "none":
+		err := s.stores[0].SetStream(key)
+		if err != nil {
+			return parser.AppendError(nil, "1")
+		}
+	}
+	entryID := req[2]
+	entryValues := make(map[string]interface{})
+	for i := 0; i < len(req)-3; i = i + 2 {
+		key := string(req[3+i])
+		value := req[3+i+1]
+		entryValues[key] = value
+	}
+
+	s.stores[0].AddStreamEntry(key, entryID, entryValues)
+	return parser.AppendBulkString(nil, string(entryID))
 }
 
 func (s *Server) handleType(req [][]byte) []byte {

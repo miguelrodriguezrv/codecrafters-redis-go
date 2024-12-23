@@ -15,10 +15,21 @@ const (
 	StreamType Type = "stream"
 )
 
+type StringValue struct {
+	data []byte
+}
+
+func (_ StringValue) Type() Type {
+	return StringType
+}
+
+type Value interface {
+	Type() Type
+}
+
 type Item struct {
-	value    []byte
-	itemType Type
-	expiry   int64
+	value  Value
+	expiry int64
 }
 
 type InMemoryStore struct {
@@ -52,10 +63,14 @@ func (s *InMemoryStore) Get(key string) ([]byte, bool) {
 	s.mu.RLock()
 	item, ok := s.items[key]
 	s.mu.RUnlock()
+
 	if !ok || (item.expiry > 0 && time.Now().UnixMilli() > item.expiry) {
 		return nil, false
 	}
-	return item.value, true
+	if item.value.Type() == StringType {
+		return item.value.(StringValue).data, true
+	}
+	return nil, false
 }
 
 func (s *InMemoryStore) Set(key string, value []byte, expiry int64) error {
@@ -67,9 +82,8 @@ func (s *InMemoryStore) Set(key string, value []byte, expiry int64) error {
 		expirationTime = time.Now().UnixMilli() + expiry
 	}
 	s.items[key] = Item{
-		value:    value,
-		itemType: StringType,
-		expiry:   expirationTime,
+		value:  StringValue{data: value},
+		expiry: expirationTime,
 	}
 	return nil
 }
@@ -81,7 +95,7 @@ func (s *InMemoryStore) Type(key string) string {
 	if !ok {
 		return "none"
 	}
-	return string(item.itemType)
+	return string(item.value.Type())
 }
 
 func (s *InMemoryStore) cleanupExpiredItems() {
@@ -107,7 +121,7 @@ func (s *InMemoryStore) Load(entries []persistence.Entry) {
 			expiry = *entry.Expires
 		}
 		s.items[entry.Key] = Item{
-			value:  ([]byte(entry.Value)),
+			value:  StringValue{data: []byte(entry.Value)},
 			expiry: expiry,
 		}
 	}
@@ -118,11 +132,13 @@ func (s *InMemoryStore) Export() []persistence.Entry {
 	defer s.mu.Unlock()
 	entries := make([]persistence.Entry, 0, len(s.items))
 	for key, item := range s.items {
-		entries = append(entries, persistence.Entry{
-			Key:     key,
-			Value:   string(item.value),
-			Expires: &item.expiry,
-		})
+		if item.value.Type() == StringType {
+			entries = append(entries, persistence.Entry{
+				Key:     key,
+				Value:   string(item.value.(StringValue).data),
+				Expires: &item.expiry,
+			})
+		}
 	}
 	return entries
 }
