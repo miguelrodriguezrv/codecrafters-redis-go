@@ -180,11 +180,11 @@ func (s *Server) handleXAdd(req [][]byte) []byte {
 		entryValues[key] = value
 	}
 
-	err := s.stores[0].AddStreamEntry(key, entryID, entryValues)
+	newEntryID, err := s.stores[0].AddStreamEntry(key, entryID, entryValues)
 	if err != nil {
 		return parser.AppendError(nil, err.Error())
 	}
-	return parser.AppendBulkString(nil, string(entryID))
+	return parser.AppendBulkString(nil, string(newEntryID))
 }
 
 func (s *Server) handleType(req [][]byte) []byte {
