@@ -219,41 +219,73 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 		log.Println("Not enough arguments for XREAD")
 		return parser.AppendError(nil, "ERR Not enough arguments for XREAD")
 	}
-	streamKey := string(req[2])
-	entryID := req[3]
 
-	if s.stores[0].Type(streamKey) != "stream" {
-		return parser.AppendError(nil, "ERR key is not a stream")
+	// Find STREAMS keyword position
+	streamsPos := -1
+	for i, arg := range req {
+		if strings.ToUpper(string(arg)) == "STREAMS" {
+			streamsPos = i
+			break
+		}
 	}
-	entries := s.stores[0].Range(streamKey, entryID, []byte("+"))
+	if streamsPos == -1 {
+		return parser.AppendError(nil, "ERR syntax error")
+	}
 
-	// Filter entries to make range exclusive
-	var validEntries []store.StreamEntry
-	for _, entry := range entries {
-		if entry.ID > string(entryID) {
-			validEntries = append(validEntries, entry)
+	streamKeys := req[streamsPos+1 : (len(req)+streamsPos+1)/2]
+	streamIDs := req[(len(req)+streamsPos+1)/2:]
+
+	if len(streamKeys) != len(streamIDs) {
+		return parser.AppendError(nil, "ERR Unbalanced STREAMS list")
+	}
+
+	// Collect entries from all streams
+	var results []struct {
+		key     string
+		entries []store.StreamEntry
+	}
+
+	for i, keyBytes := range streamKeys {
+		key := string(keyBytes)
+		id := streamIDs[i]
+		if s.stores[0].Type(key) != "stream" {
+			return parser.AppendError(nil, "ERR key is not a stream")
+		}
+		entries := s.stores[0].Range(key, id, []byte("+"))
+
+		// Filter entries to make range exclusive
+		var validEntries []store.StreamEntry
+		for _, entry := range entries {
+			if entry.ID > string(id) {
+				validEntries = append(validEntries, entry)
+			}
+		}
+
+		if len(validEntries) > 0 {
+			results = append(results, struct {
+				key     string
+				entries []store.StreamEntry
+			}{key, validEntries})
 		}
 	}
 
-	if len(validEntries) == 0 {
+	if len(results) == 0 {
 		return parser.NullArray()
 	}
 
-	response := parser.AppendArray(nil, 1)
-	response = parser.AppendArray(response, 2)
-	response = parser.AppendBulkString(response, streamKey)
-	response = parser.AppendArray(response, len(entries))
-	for _, entry := range entries {
-		// Make range exclusive
-		if entry.ID <= string(entryID) {
-			continue
-		}
+	response := parser.AppendArray(nil, len(results))
+	for _, result := range results {
 		response = parser.AppendArray(response, 2)
-		response = parser.AppendBulkString(response, entry.ID)
-		response = parser.AppendArray(response, len(entry.Value)*2)
-		for _, kv := range entry.Value {
-			response = parser.AppendBulkString(response, kv.Key)
-			response = parser.AppendBulkString(response, kv.Value)
+		response = parser.AppendBulkString(response, result.key)
+		response = parser.AppendArray(response, len(result.entries))
+		for _, entry := range result.entries {
+			response = parser.AppendArray(response, 2)
+			response = parser.AppendBulkString(response, entry.ID)
+			response = parser.AppendArray(response, len(entry.Value)*2)
+			for _, kv := range entry.Value {
+				response = parser.AppendBulkString(response, kv.Key)
+				response = parser.AppendBulkString(response, kv.Value)
+			}
 		}
 	}
 	return response
