@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -8,15 +9,15 @@ import (
 )
 
 func TestStore_SetAndGet(t *testing.T) {
-	store := store.NewInMemoryStore()
+	IMstore := store.NewInMemoryStore()
 
 	// Test basic set and get
-	err := store.Set("key1", []byte("value1"), 0)
+	err := IMstore.Set("key1", []byte("value1"), 0)
 	if err != nil {
 		t.Errorf("Failed to set value: %v", err)
 	}
 
-	value, exists := store.Get("key1")
+	value, exists := IMstore.Get("key1")
 	if !exists {
 		t.Error("Expected key to exist, but it doesn't")
 	}
@@ -25,7 +26,7 @@ func TestStore_SetAndGet(t *testing.T) {
 	}
 
 	// Test non-existent key
-	_, exists = store.Get("nonexistent")
+	_, exists = IMstore.Get("nonexistent")
 	if exists {
 		t.Error("Expected key to not exist, but it does")
 	}
@@ -60,21 +61,21 @@ func TestStore_Expiration(t *testing.T) {
 }
 
 func TestStore_Overwrite(t *testing.T) {
-	store := store.NewInMemoryStore()
+	IMstore := store.NewInMemoryStore()
 
 	// Set initial value
-	err := store.Set("key1", []byte("value1"), 0)
+	err := IMstore.Set("key1", []byte("value1"), 0)
 	if err != nil {
 		t.Errorf("Failed to set initial value: %v", err)
 	}
 
 	// Overwrite value
-	err = store.Set("key1", []byte("value2"), 0)
+	err = IMstore.Set("key1", []byte("value2"), 0)
 	if err != nil {
 		t.Errorf("Failed to overwrite value: %v", err)
 	}
 
-	value, exists := store.Get("key1")
+	value, exists := IMstore.Get("key1")
 	if !exists {
 		t.Error("Expected key to exist")
 	}
@@ -84,13 +85,13 @@ func TestStore_Overwrite(t *testing.T) {
 }
 
 func TestStore_ConcurrentAccess(t *testing.T) {
-	store := store.NewInMemoryStore()
+	IMstore := store.NewInMemoryStore()
 	done := make(chan bool)
 
 	// Concurrent writes
 	go func() {
 		for i := 0; i < 100; i++ {
-			store.Set("key", []byte("value1"), 0)
+			IMstore.Set("key", []byte("value1"), 0)
 		}
 		done <- true
 	}()
@@ -98,7 +99,7 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	// Concurrent reads
 	go func() {
 		for i := 0; i < 100; i++ {
-			store.Get("key")
+			IMstore.Get("key")
 		}
 		done <- true
 	}()
@@ -106,4 +107,58 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	// Wait for both goroutines to finish
 	<-done
 	<-done
+}
+
+func TestStreamRange(t *testing.T) {
+	IMstore := store.NewInMemoryStore()
+
+	// Create stream
+	err := IMstore.SetStream("mystream")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add entries with field-value pairs
+	entries := []struct {
+		id     string
+		fields []string
+	}{
+		{
+			"1000-0",
+			[]string{"name", "John", "age", "30"},
+		},
+		{
+			"1001-0",
+			[]string{"name", "Jane", "age", "25"},
+		},
+	}
+
+	for _, entry := range entries {
+		_, err := IMstore.AddStreamEntry("mystream", []byte(entry.id), entry.fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Test range query
+	streamEntries := IMstore.Range("mystream", []byte("-"), []byte("+"))
+
+	if len(streamEntries) != 2 {
+		t.Errorf("Expected 2 entries, got %d", len(streamEntries))
+	}
+
+	// Verify first entry
+	firstEntry := streamEntries[0]
+	if firstEntry.ID != "1000-0" {
+		t.Errorf("Expected ID 1000-0, got %s", firstEntry.ID)
+	}
+
+	expectedKeyVals := []store.KeyVal{
+		{Key: "name", Value: "John"},
+		{Key: "age", Value: "30"},
+	}
+
+	if !reflect.DeepEqual(firstEntry.Value, expectedKeyVals) {
+		t.Errorf("Expected KeyVals %v, got %v", expectedKeyVals, firstEntry.Value)
+	}
 }

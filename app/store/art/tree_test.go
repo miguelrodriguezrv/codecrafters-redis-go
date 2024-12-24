@@ -259,6 +259,70 @@ func TestART_PrefixOverlap(t *testing.T) {
 	}
 }
 
+func TestART_Range(t *testing.T) {
+	tree := art.NewART()
+
+	// Insert test data
+	testData := []struct {
+		key   string
+		value string
+	}{
+		{"apple", "1"},
+		{"banana", "2"},
+		{"cherry", "3"},
+		{"date", "4"},
+		{"elderberry", "5"},
+		{"fig", "6"},
+	}
+
+	for _, td := range testData {
+		tree.Insert([]byte(td.key), td.value)
+	}
+
+	// Test range queries
+	tests := []struct {
+		start    string
+		end      string
+		expected map[string]interface{}
+	}{
+		{
+			start: "banana",
+			end:   "elderberry",
+			expected: map[string]interface{}{
+				"banana":     "2",
+				"cherry":     "3",
+				"date":       "4",
+				"elderberry": "5",
+			},
+		},
+		{
+			start: "apple",
+			end:   "cherry",
+			expected: map[string]interface{}{
+				"apple":  "1",
+				"banana": "2",
+				"cherry": "3",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		result := tree.Range([]byte(test.start), []byte(test.end))
+
+		if len(result) != len(test.expected) {
+			t.Errorf("Expected %d results, got %d for range [%s, %s]",
+				len(test.expected), len(result), test.start, test.end)
+		}
+
+		for k, v := range test.expected {
+			if rv, exists := result[k]; !exists || rv != v {
+				t.Errorf("Expected %s=%v in range [%s, %s], got %v",
+					k, v, test.start, test.end, rv)
+			}
+		}
+	}
+}
+
 func BenchmarkART_Insert(b *testing.B) {
 	tree := art.NewART()
 	b.ResetTimer()

@@ -68,6 +68,8 @@ outerLoop:
 			case "xadd":
 				response = s.handleXAdd(req)
 				s.PropagateCommand(req)
+			case "xrange":
+				response = s.handleXRange(req)
 			case "type":
 				response = s.handleType(req)
 			case "keys":
@@ -158,7 +160,7 @@ func (s *Server) handleSet(req [][]byte) []byte {
 func (s *Server) handleXAdd(req [][]byte) []byte {
 	if len(req) < 5 {
 		log.Println("Not enough arguments for XADD")
-		return parser.AppendError(nil, "-1")
+		return parser.AppendError(nil, "Not enough arguments for XADD")
 	}
 	key := string(req[1])
 	switch s.stores[0].Type(key) {
@@ -173,11 +175,9 @@ func (s *Server) handleXAdd(req [][]byte) []byte {
 	}
 	entryID := req[2]
 
-	entryValues := make(map[string]interface{})
-	for i := 0; i < len(req)-3; i = i + 2 {
-		key := string(req[3+i])
-		value := req[3+i+1]
-		entryValues[key] = value
+	entryValues := make([]string, (len(req)-3)%2)
+	for i := 3; i < len(req); i++ {
+		entryValues = append(entryValues, string(req[i]))
 	}
 
 	newEntryID, err := s.stores[0].AddStreamEntry(key, entryID, entryValues)
@@ -185,6 +185,30 @@ func (s *Server) handleXAdd(req [][]byte) []byte {
 		return parser.AppendError(nil, err.Error())
 	}
 	return parser.AppendBulkString(nil, string(newEntryID))
+}
+
+func (s *Server) handleXRange(req [][]byte) []byte {
+	if len(req) < 4 {
+		log.Println("Not enough arguments for XRANGE")
+		return parser.AppendError(nil, "ERR Not enough arguments for XRANGE")
+	}
+	key := string(req[1])
+	if s.stores[0].Type(key) != "stream" {
+		return parser.AppendError(nil, "ERR key is not a stream")
+	}
+	entries := s.stores[0].Range(key, req[2], req[3])
+
+	response := parser.AppendArray(nil, len(entries))
+	for _, entry := range entries {
+		response = parser.AppendArray(response, 2)
+		response = parser.AppendBulkString(response, entry.ID)
+		response = parser.AppendArray(response, len(entry.Value)*2)
+		for _, kv := range entry.Value {
+			response = parser.AppendBulkString(response, kv.Key)
+			response = parser.AppendBulkString(response, kv.Value)
+		}
+	}
+	return response
 }
 
 func (s *Server) handleType(req [][]byte) []byte {

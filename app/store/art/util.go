@@ -1,6 +1,7 @@
 package art
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 )
@@ -40,6 +41,27 @@ func findMismatchIndex(keyPart, prefix []byte) int {
 		}
 	}
 	return minLength
+}
+
+// inRange checks if key is between start and end (inclusive)
+func inRange(key, start, end []byte) bool {
+    return bytes.Compare(key, start) >= 0 && bytes.Compare(key, end) <= 0
+}
+
+// isPrefixInRange checks if any key with this prefix could be in range
+func isPrefixInRange(prefix, start, end []byte) bool {
+    // If prefix is shorter than start, check if it could lead to keys >= start
+    if len(prefix) < len(start) {
+        return bytes.Compare(prefix, start[:len(prefix)]) >= 0
+    }
+
+    // If prefix is shorter than end, check if it could lead to keys <= end
+    if len(prefix) < len(end) {
+        return bytes.Compare(prefix, end[:len(prefix)]) <= 0
+    }
+
+    // If prefix is longer or equal to both bounds, check if it's in range
+    return bytes.Compare(prefix, start) >= 0 && bytes.Compare(prefix, end) <= 0
 }
 
 // asciiPrint generates the ASCII representation with leaf highlighting and colors.

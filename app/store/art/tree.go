@@ -93,6 +93,16 @@ func (t *ART) Insert(key []byte, value interface{}) {
 	}
 }
 
+func (t *ART) Range(start, end []byte) map[string]interface{} {
+	if t.root == nil {
+		return nil
+	}
+
+	result := make(map[string]interface{})
+	t.rangeTraverse(t.root, start, end, result)
+	return result
+}
+
 func findNextNode(node *Node, nextKey byte) *Node {
 	var nextNode *Node
 	switch node.nodeType {
@@ -176,4 +186,40 @@ func findParent(node, target *Node) *Node {
 		}
 	}
 	return nil
+}
+
+func (t *ART) rangeTraverse(node *Node, start, end []byte, result map[string]interface{}) {
+	if node == nil {
+		return
+	}
+
+	// For leaf nodes, check if the complete key is within range
+	if node.isLeaf {
+		if inRange(node.prefix, start, end) {
+			result[string(node.prefix)] = node.value
+		}
+		return
+	}
+
+	// Check node type and traverse children
+	switch node.nodeType {
+	case Node4, Node16:
+		for i := range node.keys {
+			t.rangeTraverse(node.children[i], start, end, result)
+		}
+
+	case Node48:
+		for i := byte(0); i < byte(255); i++ {
+			if idx := node.indexMap[i]; idx != -1 {
+				t.rangeTraverse(node.children[idx], start, end, result)
+			}
+		}
+
+	case Node256:
+		for i := byte(0); i < byte(255); i++ {
+			if node.children[i] != nil {
+				t.rangeTraverse(node.children[i], start, end, result)
+			}
+		}
+	}
 }
