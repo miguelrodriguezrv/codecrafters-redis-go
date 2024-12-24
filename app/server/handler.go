@@ -220,6 +220,22 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 		return parser.AppendError(nil, "ERR Not enough arguments for XREAD")
 	}
 
+	// Parse BLOCK option if present
+	var blockMillis int64 = -1 // -1 means non-blocking
+	for i := 1; i < len(req); i++ {
+		if strings.ToUpper(string(req[i])) == "BLOCK" {
+			if i+1 >= len(req) {
+				return parser.AppendError(nil, "ERR syntax error")
+			}
+			var err error
+			blockMillis, err = strconv.ParseInt(string(req[i+1]), 10, 64)
+			if err != nil {
+				return parser.AppendError(nil, "ERR invalid BLOCK timeout")
+			}
+			break
+		}
+	}
+
 	// Find STREAMS keyword position
 	streamsPos := -1
 	for i, arg := range req {
@@ -239,56 +255,70 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 		return parser.AppendError(nil, "ERR Unbalanced STREAMS list")
 	}
 
-	// Collect entries from all streams
-	var results []struct {
-		key     string
-		entries []store.StreamEntry
+	// Set up deadline for blocking
+	var deadline time.Time
+	if blockMillis > 0 {
+		deadline = time.Now().Add(time.Duration(blockMillis) * time.Millisecond)
 	}
 
-	for i, keyBytes := range streamKeys {
-		key := string(keyBytes)
-		id := streamIDs[i]
-		if s.stores[0].Type(key) != "stream" {
-			return parser.AppendError(nil, "ERR key is not a stream")
+	for {
+		// Collect entries from all streams
+		var results []struct {
+			key     string
+			entries []store.StreamEntry
 		}
-		entries := s.stores[0].Range(key, id, []byte("+"))
 
-		// Filter entries to make range exclusive
-		var validEntries []store.StreamEntry
-		for _, entry := range entries {
-			if entry.ID > string(id) {
-				validEntries = append(validEntries, entry)
+		for i, keyBytes := range streamKeys {
+			key := string(keyBytes)
+			id := streamIDs[i]
+			if s.stores[0].Type(key) != "stream" {
+				return parser.AppendError(nil, "ERR key is not a stream")
+			}
+			entries := s.stores[0].Range(key, id, []byte("+"))
+
+			// Filter entries to make range exclusive
+			var validEntries []store.StreamEntry
+			for _, entry := range entries {
+				if entry.ID > string(id) {
+					validEntries = append(validEntries, entry)
+				}
+			}
+
+			if len(validEntries) > 0 {
+				results = append(results, struct {
+					key     string
+					entries []store.StreamEntry
+				}{key, validEntries})
 			}
 		}
 
-		if len(validEntries) > 0 {
-			results = append(results, struct {
-				key     string
-				entries []store.StreamEntry
-			}{key, validEntries})
-		}
-	}
-
-	if len(results) == 0 {
-		return parser.NullArray()
-	}
-
-	response := parser.AppendArray(nil, len(results))
-	for _, result := range results {
-		response = parser.AppendArray(response, 2)
-		response = parser.AppendBulkString(response, result.key)
-		response = parser.AppendArray(response, len(result.entries))
-		for _, entry := range result.entries {
-			response = parser.AppendArray(response, 2)
-			response = parser.AppendBulkString(response, entry.ID)
-			response = parser.AppendArray(response, len(entry.Value)*2)
-			for _, kv := range entry.Value {
-				response = parser.AppendBulkString(response, kv.Key)
-				response = parser.AppendBulkString(response, kv.Value)
+		if len(results) > 0 || blockMillis == 0 {
+			if len(results) == 0 {
+				return parser.NullArray()
 			}
+			response := parser.AppendArray(nil, len(results))
+			for _, result := range results {
+				response = parser.AppendArray(response, 2)
+				response = parser.AppendBulkString(response, result.key)
+				response = parser.AppendArray(response, len(result.entries))
+				for _, entry := range result.entries {
+					response = parser.AppendArray(response, 2)
+					response = parser.AppendBulkString(response, entry.ID)
+					response = parser.AppendArray(response, len(entry.Value)*2)
+					for _, kv := range entry.Value {
+						response = parser.AppendBulkString(response, kv.Key)
+						response = parser.AppendBulkString(response, kv.Value)
+					}
+				}
+			}
+			return response
 		}
+		if blockMillis > 0 && time.Now().After(deadline) {
+			return parser.NullArray()
+		}
+
+		time.Sleep(10 * time.Millisecond)
 	}
-	return response
 
 }
 
