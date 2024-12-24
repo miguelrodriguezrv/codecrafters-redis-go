@@ -17,6 +17,7 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
+	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
 func (s *Server) handleClient(conn net.Conn) {
@@ -70,6 +71,8 @@ outerLoop:
 				s.PropagateCommand(req)
 			case "xrange":
 				response = s.handleXRange(req)
+			case "xread":
+				response = s.handleXRead(req)
 			case "type":
 				response = s.handleType(req)
 			case "keys":
@@ -209,6 +212,52 @@ func (s *Server) handleXRange(req [][]byte) []byte {
 		}
 	}
 	return response
+}
+
+func (s *Server) handleXRead(req [][]byte) []byte {
+	if len(req) < 4 {
+		log.Println("Not enough arguments for XREAD")
+		return parser.AppendError(nil, "ERR Not enough arguments for XREAD")
+	}
+	streamKey := string(req[2])
+	entryID := req[3]
+
+	if s.stores[0].Type(streamKey) != "stream" {
+		return parser.AppendError(nil, "ERR key is not a stream")
+	}
+	entries := s.stores[0].Range(streamKey, entryID, []byte("+"))
+
+	// Filter entries to make range exclusive
+	var validEntries []store.StreamEntry
+	for _, entry := range entries {
+		if entry.ID > string(entryID) {
+			validEntries = append(validEntries, entry)
+		}
+	}
+
+	if len(validEntries) == 0 {
+		return parser.NullArray()
+	}
+
+	response := parser.AppendArray(nil, 1)
+	response = parser.AppendArray(response, 2)
+	response = parser.AppendBulkString(response, streamKey)
+	response = parser.AppendArray(response, len(entries))
+	for _, entry := range entries {
+		// Make range exclusive
+		if entry.ID <= string(entryID) {
+			continue
+		}
+		response = parser.AppendArray(response, 2)
+		response = parser.AppendBulkString(response, entry.ID)
+		response = parser.AppendArray(response, len(entry.Value)*2)
+		for _, kv := range entry.Value {
+			response = parser.AppendBulkString(response, kv.Key)
+			response = parser.AppendBulkString(response, kv.Value)
+		}
+	}
+	return response
+
 }
 
 func (s *Server) handleType(req [][]byte) []byte {

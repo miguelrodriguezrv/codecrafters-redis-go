@@ -147,6 +147,10 @@ func NullBulkString() []byte {
 	return []byte("$-1\r\n")
 }
 
+func NullArray() []byte {
+	return []byte("*-1\r\n")
+}
+
 func stripNewlines(s string) string {
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\r' || s[i] == '\n' {
