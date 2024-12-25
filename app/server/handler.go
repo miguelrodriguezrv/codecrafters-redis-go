@@ -174,7 +174,7 @@ func (s *Server) handleIncr(req [][]byte) []byte {
 		var err error
 		valInt, err = strconv.ParseInt(string(value), 10, 64)
 		if err != nil {
-			return parser.AppendError(nil, err.Error())
+			return parser.AppendError(nil, "ERR value is not an integer or out of range")
 		}
 	}
 	valInt++
