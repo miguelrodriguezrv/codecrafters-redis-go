@@ -169,12 +169,13 @@ func (s *Server) handleIncr(req [][]byte) []byte {
 	}
 	key := string(req[1])
 	value, ok := s.stores[0].Get(key)
-	if !ok {
-		return parser.NullBulkString()
-	}
-	valInt, err := strconv.ParseInt(string(value), 10, 64)
-	if err != nil {
-		return parser.AppendError(nil, err.Error())
+	var valInt int64
+	if ok {
+		var err error
+		valInt, err = strconv.ParseInt(string(value), 10, 64)
+		if err != nil {
+			return parser.AppendError(nil, err.Error())
+		}
 	}
 	valInt++
 	s.stores[0].Set(key, []byte(strconv.FormatInt(valInt, 10)), 0)
