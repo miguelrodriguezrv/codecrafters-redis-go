@@ -292,7 +292,7 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 			}
 		}
 
-		if len(results) > 0 || blockMillis == 0 {
+		if len(results) > 0 || blockMillis == -1 {
 			if len(results) == 0 {
 				return parser.NullArray()
 			}
