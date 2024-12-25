@@ -27,6 +27,7 @@ type Store interface {
 	Set(key string, value []byte, expiry int64) error
 	SetStream(key string) error
 	AddStreamEntry(key string, entryID []byte, fields []string) (string, error)
+	GetStreamLastEntryID(key string) ([]byte, error)
 	Range(key string, start, end []byte) []store.StreamEntry
 	Type(key string) string
 	Export() []persistence.Entry

@@ -261,6 +261,24 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 		deadline = time.Now().Add(time.Duration(blockMillis) * time.Millisecond)
 	}
 
+	// Check for $ IDs
+	for i, keyBytes := range streamKeys {
+		key := string(keyBytes)
+		startID := streamIDs[i]
+		if s.stores[0].Type(key) != "stream" {
+			return parser.AppendError(nil, "ERR key is not a stream")
+		}
+
+		if string(startID) == "$" {
+			var err error
+			startID, err = s.stores[0].GetStreamLastEntryID(key)
+			if err != nil {
+				return parser.AppendError(nil, err.Error())
+			}
+		}
+		streamIDs[i] = startID
+	}
+
 	for {
 		// Collect entries from all streams
 		var results []struct {
@@ -270,16 +288,24 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 
 		for i, keyBytes := range streamKeys {
 			key := string(keyBytes)
-			id := streamIDs[i]
+			startID := streamIDs[i]
 			if s.stores[0].Type(key) != "stream" {
 				return parser.AppendError(nil, "ERR key is not a stream")
 			}
-			entries := s.stores[0].Range(key, id, []byte("+"))
+
+			if string(startID) == "$" {
+				var err error
+				startID, err = s.stores[0].GetStreamLastEntryID(key)
+				if err != nil {
+					return parser.AppendError(nil, err.Error())
+				}
+			}
+			entries := s.stores[0].Range(key, startID, []byte("+"))
 
 			// Filter entries to make range exclusive
 			var validEntries []store.StreamEntry
 			for _, entry := range entries {
-				if entry.ID > string(id) {
+				if entry.ID > string(startID) {
 					validEntries = append(validEntries, entry)
 				}
 			}
@@ -316,7 +342,6 @@ func (s *Server) handleXRead(req [][]byte) []byte {
 		if blockMillis > 0 && time.Now().After(deadline) {
 			return parser.NullArray()
 		}
-
 		time.Sleep(10 * time.Millisecond)
 	}
 

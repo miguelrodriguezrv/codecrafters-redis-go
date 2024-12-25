@@ -32,6 +32,10 @@ func (_ StreamValue) Type() Type {
 	return StreamType
 }
 
+func (s *StreamValue) GetLastEntryID() string {
+	return fmt.Sprintf("%d-%d", s.lastEntryIDTimestamp, s.lastEntryIDSequence)
+}
+
 func (s *StreamValue) setLastEntryID(timestamp, sequence int64) {
 	s.lastEntryIDTimestamp = timestamp
 	s.lastEntryIDSequence = sequence
@@ -51,6 +55,18 @@ func (s *InMemoryStore) SetStream(key string) error {
 	return nil
 }
 
+func (s *InMemoryStore) GetStreamLastEntryID(key string) ([]byte, error) {
+	item, ok := s.items[key]
+	if !ok {
+		return nil, fmt.Errorf("ERR stream key %s does not exist", key)
+	}
+	if item.value.Type() != StreamType {
+		return nil, fmt.Errorf("ERR Invalid type for key %s - %v", key, item.value.Type())
+	}
+	stream := item.value.(*StreamValue)
+	return []byte(stream.GetLastEntryID()), nil
+}
+
 func (s *InMemoryStore) AddStreamEntry(key string, entryID []byte, fields []string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,23 +80,21 @@ func (s *InMemoryStore) AddStreamEntry(key string, entryID []byte, fields []stri
 		return "", errors.New("ERR wrong number of arguments for XADD")
 	}
 
-	switch item.value.Type() {
-	case StreamType:
-		stream := item.value.(*StreamValue)
-		EIDTimestamp, EIDSequence, err := stream.parseEntryID(entryID)
-		if err != nil {
-			return "", err
-		}
-		if err := stream.validateEntryID(EIDTimestamp, EIDSequence); err != nil {
-			return "", err
-		}
-		strEntryID := fmt.Sprintf("%d-%d", EIDTimestamp, EIDSequence)
-		stream.tree.Insert([]byte(strEntryID), fields)
-		stream.setLastEntryID(EIDTimestamp, EIDSequence)
-		return strEntryID, nil
-	default:
+	if item.value.Type() != StreamType {
 		return "", fmt.Errorf("ERR Invalid type for key %s - %v", key, item.value.Type())
 	}
+	stream := item.value.(*StreamValue)
+	EIDTimestamp, EIDSequence, err := stream.parseEntryID(entryID)
+	if err != nil {
+		return "", err
+	}
+	if err := stream.validateEntryID(EIDTimestamp, EIDSequence); err != nil {
+		return "", err
+	}
+	strEntryID := fmt.Sprintf("%d-%d", EIDTimestamp, EIDSequence)
+	stream.tree.Insert([]byte(strEntryID), fields)
+	stream.setLastEntryID(EIDTimestamp, EIDSequence)
+	return strEntryID, nil
 }
 
 func (s *InMemoryStore) Range(key string, start, end []byte) []StreamEntry {
@@ -92,46 +106,46 @@ func (s *InMemoryStore) Range(key string, start, end []byte) []StreamEntry {
 		return nil
 	}
 
-	switch item.value.Type() {
-	case StreamType:
-		stream := item.value.(*StreamValue)
-
-		startID := string(start)
-		endID := string(end)
-		// Convert "-" to minimum possible ID
-		if startID == "-" {
-			startID = "0-0"
-		}
-
-		// Convert "+" to maximum possible ID
-		if endID == "+" {
-			endID = "9223372036854775807-9223372036854775807" // Max int64-int64
-		}
-
-		// Get range from the ART
-		entries := stream.tree.Range([]byte(startID), []byte(endID))
-
-		// Convert to array of entries
-		result := make([]StreamEntry, 0, len(entries))
-		for id, value := range entries {
-			keyVals, err := parseStreamValue(value)
-			if err != nil {
-				log.Printf("Error parsing stream value: %v", err)
-				continue
-			}
-			result = append(result, StreamEntry{
-				ID:    id,
-				Value: keyVals,
-			})
-		}
-
-		// Sort entries by ID
-		sort.Slice(result, func(i, j int) bool {
-			return result[i].ID < result[j].ID
-		})
-		return result
+	if item.value.Type() != StreamType {
+		return nil
 	}
-	return nil
+
+	stream := item.value.(*StreamValue)
+
+	startID := string(start)
+	endID := string(end)
+	// Convert "-" to minimum possible ID
+	if startID == "-" {
+		startID = "0-0"
+	}
+
+	// Convert "+" to maximum possible ID
+	if endID == "+" {
+		endID = "9223372036854775807-9223372036854775807" // Max int64-int64
+	}
+
+	// Get range from the ART
+	entries := stream.tree.Range([]byte(startID), []byte(endID))
+
+	// Convert to array of entries
+	result := make([]StreamEntry, 0, len(entries))
+	for id, value := range entries {
+		keyVals, err := parseStreamValue(value)
+		if err != nil {
+			log.Printf("Error parsing stream value: %v", err)
+			continue
+		}
+		result = append(result, StreamEntry{
+			ID:    id,
+			Value: keyVals,
+		})
+	}
+
+	// Sort entries by ID
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+	return result
 }
 
 func (s *StreamValue) parseEntryID(entryID []byte) (timestamp int64, sequence int64, err error) {
