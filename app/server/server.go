@@ -34,12 +34,19 @@ type Store interface {
 }
 
 type Server struct {
-	config     Config
-	info       Info
-	ready      bool
-	slaveMutex sync.Mutex
-	slaves     []Slave
-	stores     []Store
+	config       Config
+	info         Info
+	ready        bool
+	slaveMutex   sync.Mutex
+	slaves       []Slave
+	stores       []Store
+	transactions map[net.Conn]*Transaction
+	txMutex      sync.RWMutex
+}
+
+type Transaction struct {
+	commands [][][]byte
+	inMulti  bool
 }
 
 type Slave struct {
@@ -63,6 +70,7 @@ func NewServer(config Config, rdbPath string) *Server {
 			masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 			masterReplOffset: &atomic.Int64{},
 		},
+		transactions: make(map[net.Conn]*Transaction),
 	}
 
 	if config.ReplicaOf != "" {
@@ -129,7 +137,7 @@ func readOK(conn net.Conn) error {
 		return err
 	}
 	response := string(buf[:n])
-	if response != string(parser.AppendOK(nil)) {
+	if response != string(parser.OK()) {
 		return fmt.Errorf("%s", response)
 	}
 	return nil

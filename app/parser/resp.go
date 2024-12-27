@@ -139,8 +139,8 @@ func AppendError(b []byte, s string) []byte {
 }
 
 // AppendOK appends a Redis protocol OK to the input bytes.
-func AppendOK(b []byte) []byte {
-	return append(b, '+', 'O', 'K', '\r', '\n')
+func OK() []byte {
+	return []byte("+OK\r\n")
 }
 
 func NullBulkString() []byte {

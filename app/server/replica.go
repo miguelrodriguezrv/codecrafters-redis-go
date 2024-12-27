@@ -221,9 +221,7 @@ outerLoop:
 			}
 			return
 		}
-		log.Printf("Read %d bytes from master: %q", n, tmp[:n])
 		buf = append(buf, tmp[:n]...)
-		log.Printf("Current buffer contents: %q", buf)
 		for len(buf) > 0 {
 			req, remainder, err := parser.ParseCommand(buf)
 			if err != nil {
@@ -246,9 +244,6 @@ outerLoop:
 			case "set":
 				s.handleSet(req)
 			case "replconf":
-				if len(req) >= 2 {
-					log.Printf("REPLCONF subcommand: %s", req[1])
-				}
 				response := s.handleREPLConf(req)
 				log.Printf("Sending REPLCONF response: %q", response)
 				_, err := conn.Write(response)
