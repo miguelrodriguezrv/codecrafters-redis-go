@@ -152,37 +152,21 @@ func (s *Server) handleWait(req [][]byte) []byte {
 		log.Printf("Invalid WAIT timeout: %v", err)
 		return parser.AppendError(nil, "-1")
 	}
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
 	log.Printf("Waiting for %d for %dms", repAmount, timeout)
-
-	var count atomic.Int64
-	command := parser.EncodeStringArray("REPLCONF", "GETACK", "*")
-
 	s.slaveMutex.Lock()
 	defer s.slaveMutex.Unlock()
-
-	// First count already synchronized slaves
+	var count atomic.Int64
+	command := parser.EncodeStringArray("REPLCONF", "GETACK", "*")
+	var wg sync.WaitGroup
 	for _, slave := range s.slaves {
-		if slave.offset.Load() >= s.info.masterReplOffset.Load() {
+		if slave.offset.Load() == s.info.masterReplOffset.Load() {
 			count.Add(1)
+			continue
 		}
-	}
-
-	// If we already have enough synchronized slaves, return early
-	if count.Load() >= int64(repAmount) {
-		return parser.AppendInt(nil, count.Load())
-	}
-	responses := make(chan bool, len(s.slaves))
-	for _, slave := range s.slaves {
-		if slave.offset.Load() >= s.info.masterReplOffset.Load() {
-			continue // Skip already synced slaves
-		}
+		wg.Add(1)
 		go func(slave Slave) {
-			var successful bool
-			defer func() {
-				if !successful {
-					responses <- false
-				}
-			}()
+			defer wg.Done()
 			_, err := slave.conn.Write(command)
 			if err != nil {
 				log.Printf("Error sending REPLCONF ACK *: %v", err)
@@ -190,20 +174,17 @@ func (s *Server) handleWait(req [][]byte) []byte {
 			}
 
 			buf := make([]byte, 128)
-
-			log.Printf("Reading %v", slave.conn)
-			slave.conn.SetDeadline(time.Time{})
+			slave.conn.SetReadDeadline(deadline)
+			defer slave.conn.SetReadDeadline(time.Time{})
 			n, err := slave.conn.Read(buf)
-			log.Printf("what [%d] %v", n, slave.conn)
 			if err != nil {
-				log.Printf("Error REPLCONF ACK response (%v): %v", slave.conn, err)
+				log.Printf("Error REPLCONF ACK response: %v", err)
 				return
 			}
-			log.Println("Got ", string(buf[:n]))
-
+			count.Add(1)
 			req, _, err := parser.ParseCommand(buf[:n])
 			if err != nil {
-				log.Printf("Error parsing REPLCONF ACK response(%v): %v", slave.conn, err)
+				log.Printf("Error parsing REPLCONF ACK response: %v", err)
 				return
 			}
 			if len(req) < 3 {
@@ -216,35 +197,9 @@ func (s *Server) handleWait(req [][]byte) []byte {
 				return
 			}
 			slave.offset.Store(offset)
-			log.Println("Received ACK")
-			if offset >= s.info.masterReplOffset.Load() {
-				newCount := count.Add(1)
-				log.Printf("Added ACK to %d", newCount)
-				responses <- true
-				successful = true
-			}
 		}(slave)
 	}
-
-	remaining := len(s.slaves)
-	timer := time.NewTimer(time.Duration(timeout) * time.Millisecond)
-	defer timer.Stop()
-
-	for remaining > 0 {
-		select {
-		case success := <-responses:
-			remaining--
-			log.Println("Got response")
-			if success && count.Load() >= int64(repAmount) {
-				log.Printf("Got %d ACKs (REACHED AMOUNT)", count.Load())
-				return parser.AppendInt(nil, count.Load())
-			}
-		case <-timer.C:
-			log.Printf("Got %d ACKs (TIMEOUT)", count.Load())
-			return parser.AppendInt(nil, count.Load())
-		}
-	}
-
-	log.Printf("Got %d ACKs (ALL DONE)", count.Load())
+	wg.Wait()
+	log.Printf("Got %d ACKs", count.Load())
 	return parser.AppendInt(nil, count.Load())
 }

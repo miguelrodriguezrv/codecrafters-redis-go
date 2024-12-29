@@ -33,7 +33,8 @@ func (s *Server) handleExec(conn net.Conn) []byte {
 
 	responses := make([][]byte, 0, len(tx.commands))
 	for _, cmd := range tx.commands {
-		responses = append(responses, s.handleCommand(cmd, conn))
+		response, _ := s.handleCommand(cmd, conn)
+		responses = append(responses, response)
 	}
 
 	delete(s.transactions, conn)

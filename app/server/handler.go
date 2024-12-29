@@ -43,7 +43,10 @@ outerLoop:
 			if len(req) == 0 {
 				continue outerLoop
 			}
-			response := s.handleCommand(req, conn)
+			response, keepListening := s.handleCommand(req, conn)
+			if !keepListening {
+				return
+			}
 
 			if len(response) > 0 {
 				conn.Write(response)
@@ -52,16 +55,16 @@ outerLoop:
 	}
 }
 
-func (s *Server) handleCommand(req [][]byte, conn net.Conn) []byte {
+func (s *Server) handleCommand(req [][]byte, conn net.Conn) (response []byte, keepListening bool) {
 	cmd := strings.ToLower(string(req[0]))
 
 	switch cmd {
 	case "multi":
-		return s.handleMulti(conn)
+		return s.handleMulti(conn), true
 	case "exec":
-		return s.handleExec(conn)
+		return s.handleExec(conn), true
 	case "discard":
-		return s.handleDiscard(conn)
+		return s.handleDiscard(conn), true
 	}
 	s.txMutex.Lock()
 	tx, exists := s.transactions[conn]
@@ -69,9 +72,8 @@ func (s *Server) handleCommand(req [][]byte, conn net.Conn) []byte {
 
 	if exists && tx.inMulti {
 		tx.commands = append(tx.commands, req)
-		return parser.AppendString(nil, "QUEUED")
+		return parser.AppendString(nil, "QUEUED"), true
 	}
-	var response []byte
 	switch cmd {
 	case "ping":
 		response = parser.AppendString(nil, "PONG")
@@ -109,7 +111,7 @@ func (s *Server) handleCommand(req [][]byte, conn net.Conn) []byte {
 			response = parser.AppendError(nil, "-1")
 		} else {
 			s.handlePSync(req, conn)
-			return nil
+			return nil, false
 		}
 	case "wait":
 		if s.info.role == "master" {
@@ -120,7 +122,7 @@ func (s *Server) handleCommand(req [][]byte, conn net.Conn) []byte {
 	default:
 		response = parser.AppendError(nil, "-1")
 	}
-	return response
+	return response, true
 }
 
 func (s *Server) handleConfig(req [][]byte) []byte {
